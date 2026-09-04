@@ -1,0 +1,52 @@
+{
+  "name": "pixiv-pulse",
+  "version": "0.4.16",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "本地优先的 Pixiv 作者全作品增长分析扩展。",
+  "homepage": "https://github.com/Zenith-Angle/PixivPulse#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zenith-Angle/PixivPulse.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Zenith-Angle/PixivPulse/issues"
+  },
+  "scripts": {
+    "postinstall": "wxt prepare",
+    "generate:icons": "node scripts/generate-icons.mjs",
+    "dev": "npm run build:installed",
+    "build:installed": "npm run generate:icons && wxt build -c wxt.dev.config.ts && node scripts/verify-installed-build.mjs",
+    "verify:installed": "node scripts/verify-installed-build.mjs",
+    "build": "npm run generate:icons && wxt build",
+    "zip": "npm run generate:icons && wxt zip",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "npm run typecheck && npm test && npm run build && npm run zip && npm run build:installed"
+  },
+  "dependencies": {
+    "echarts": "6.1.0",
+    "idb": "8.0.3",
+    "lucide-react": "1.37.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.3",
+    "@types/chrome": "0.2.7",
+    "@types/node": "26.1.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "@wxt-dev/module-react": "1.2.2",
+    "fake-indexeddb": "6.2.5",
+    "jsdom": "29.0.0",
+    "sharp": "0.35.3",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11",
+    "wxt": "0.21.4"
+  }
+}
