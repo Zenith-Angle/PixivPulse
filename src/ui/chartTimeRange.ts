@@ -32,7 +32,6 @@ export interface ChartTimeRange {
 }
 
 export type ChartTimeRangeInput = ChartTimeRangeRequest | ChartTimeRange;
-export type ChartTimeRangeOptions = ChartTimeRangeRequest;
 export type TimestampAccessor<T> = (value: T) => TimeInput | null | undefined;
 
 const DATE_ONLY_PATTERNS = [
@@ -121,9 +120,6 @@ export function resolveChartTimeRange(input: ChartTimeRangeRequest = {}): ChartT
   return { preset, startMs, endMs };
 }
 
-export const getChartTimeRange = resolveChartTimeRange;
-export const buildChartTimeRange = resolveChartTimeRange;
-
 function defaultTimestamp(value: unknown): TimeInput | null {
   if (typeof value !== "object" || value === null) return null;
   const record = value as Record<string, unknown>;
@@ -170,6 +166,3 @@ export function filterChartTimePoints<T extends ChartTimePoint>(
 ): T[] {
   return filterTimestamped(points, range, (point) => point.at);
 }
-
-export const filterChartPoints = filterChartTimePoints;
-export const filterByChartTimeRange = filterTimestamped;

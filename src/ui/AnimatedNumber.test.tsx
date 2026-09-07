@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AnimatedNumber, FlipValue, numberRollDirection, numericDisplayValue } from "./AnimatedNumber";
+import { AnimatedNumber, numberRollDirection, numericDisplayValue } from "./AnimatedNumber";
 
 const root = () => screen.getByTestId("animated-number");
 const rows = () => [...root().querySelectorAll(".animated-number-row")].map((node) => node.textContent);
@@ -93,9 +93,4 @@ describe("AnimatedNumber", () => {
     expect(numberRollDirection(null, 4)).toBe("change");
   });
 
-  it("keeps the FlipValue alias and caller-provided accessibility label", () => {
-    render(<FlipValue value="42" aria-label="当前值" data-testid="animated-number" />);
-    expect(root()).toHaveAttribute("aria-label", "当前值");
-    expect(root()).toHaveAttribute("data-current-value", "42");
-  });
 });

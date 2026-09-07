@@ -2,6 +2,16 @@
 
 本项目的公开版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.4.20] - 2026-09-07
+
+### Fixed
+
+- 比较页所有时间范围统一显示缩放拖动条，修复“今日”和“近 3 天”因分桶数恰好不超过 24 而改变图表布局的问题。
+
+### Changed
+
+- 将缩放条与图表底部布局收口到同一配置，删除未接入主流程的旧相对百分比比较图、无调用别名和转发组件。
+
 ## [0.4.19] - 2026-09-07
 
 ### Changed

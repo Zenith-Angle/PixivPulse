@@ -160,10 +160,3 @@ export function AnimatedNumber({ value, comparisonValue, animationSignal, animat
     </span>
   );
 }
-
-/** A semantic alias retained for existing callers. */
-export function FlipValue(props: AnimatedNumberProps) {
-  return <AnimatedNumber {...props} />;
-}
-
-export default AnimatedNumber;

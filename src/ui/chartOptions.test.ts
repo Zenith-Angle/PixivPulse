@@ -4,7 +4,7 @@ import env from "zrender/lib/core/env.js";
 import { LineChart } from "echarts/charts";
 import { GridComponent, TooltipComponent, DataZoomComponent, LegendComponent } from "echarts/components";
 import { SVGRenderer } from "echarts/renderers";
-import { buildAbsoluteCompareChartOption, buildCompareChartOption, buildFollowerChartOption, buildGrowthChartOption, buildPortfolioChartOption } from "./chartOptions";
+import { buildAbsoluteCompareChartOption, buildFollowerChartOption, buildGrowthChartOption, buildPortfolioChartOption } from "./chartOptions";
 import { buildTrendSeries } from "./chartTrend";
 
 const optionRecord = (option: unknown): Record<string, any> => option as Record<string, any>;
@@ -172,13 +172,12 @@ describe("dashboard ECharts option builders", () => {
       { at: "2026-08-31T00:05:00.000Z", value: 12 },
       { at: "2026-08-31T03:00:00.000Z", value: 20 },
     ] }));
-    const comparison = optionRecord(buildCompareChartOption([{ key: "a", name: "A", color: "#000", points: [{ x: 0, y: 0 }, { x: 2, y: 5 }] }]));
     const detail = optionRecord(buildGrowthChartOption({ metric: "views", points: [
       { at: "2026-08-30T00:00:00.000Z", value: 0 },
       { at: "2026-08-30T02:00:00.000Z", value: 5 },
     ] }));
 
-    for (const option of [portfolio, comparison, detail]) {
+    for (const option of [portfolio, detail]) {
       expect(option.series[0].smooth).toBe(0.35);
       expect(option.series[0].smoothMonotone).toBeUndefined();
       expect(option.series[0].step).toBeUndefined();
@@ -202,20 +201,6 @@ describe("dashboard ECharts option builders", () => {
     expect(option.series[0].data).toHaveLength(15);
     expect(option.series[0].data.filter((point: unknown[]) => point[0] === Date.parse(duplicateAt))).toHaveLength(2);
     expect(option.series[0].showSymbol).toBe(false);
-  });
-
-  it("keeps normalized comparison as multiple line series with tooltips", () => {
-    const option = optionRecord(buildCompareChartOption([
-      { key: "a", name: "甲", color: "#00a7e9", points: [{ x: 0, y: 0 }, { x: 1, y: 12 }] },
-      { key: "b", name: "乙", color: "#ff6b5e", points: [{ x: 0, y: 0 }, { x: 1, y: -4 }] },
-    ]));
-    expect(option.tooltip.trigger).toBe("axis");
-    expect(option.tooltip.order).toBe("valueDesc");
-    expect(option.series).toHaveLength(2);
-    expect(option.xAxis.type).toBe("value");
-    expect(option.series[0].sampling).toBeUndefined();
-    expect(option.xAxis.name).toContain("小时");
-    expect(option.series[0].data).toEqual([[0, 0, "", 0], [24, 12, "", 1]]);
   });
 
   it("compares two works as absolute totals on their real timestamps", () => {
@@ -284,23 +269,6 @@ describe("dashboard ECharts option builders", () => {
     expect(option.yAxis.min({ min: 5 })).toBe(0);
   });
 
-  it("normalizes irregular compare points and keeps one axis unit", () => {
-    const option = optionRecord(buildCompareChartOption([{
-      key: "a",
-      name: "甲",
-      color: "#00a7e9",
-      points: [
-        { x: 6, y: 60 },
-        { x: Number.NaN, y: 90 },
-        { x: 0.5, y: 5 },
-        { x: 0.5, y: 7 },
-      ],
-    }]));
-
-    expect(option.xAxis.name).toBe("距首次观察（天）");
-    expect(option.series[0].data).toEqual([[0.5, 5, "", 2], [0.5, 7, "", 3], [6, 60, "", 0]]);
-  });
-
   it("builds one work's absolute totals instead of percentages", () => {
     const option = optionRecord(buildGrowthChartOption({ metric: "likes", points: [
       { at: "2026-08-30T00:00:00.000Z", value: 1_250 },
@@ -358,5 +326,31 @@ describe("dashboard ECharts option builders", () => {
     expect(slider.realtime).toBe(true);
     expect(slider.throttle).toBe(20);
     expect(option.dataZoom.every((zoom: { filterMode: string }) => zoom.filterMode === "none")).toBe(true);
+  });
+
+  it.each([
+    ["today", 20, 1],
+    ["3d", 72, 3],
+  ] as const)("keeps a visible comparison slider for the %s range", (preset, durationHours, bucketHours) => {
+    const start = Date.parse("2026-09-07T00:00:00+08:00");
+    const end = start + durationHours * 60 * 60_000;
+    const option = optionRecord(buildAbsoluteCompareChartOption({
+      metric: "views",
+      valueMode: "delta",
+      range: { preset, startMs: start, endMs: end },
+      series: [{
+        key: "a",
+        name: "甲",
+        color: "#007eaf",
+        points: [
+          { at: new Date(start).toISOString(), value: 100 },
+          { at: new Date(end).toISOString(), value: 120 },
+        ],
+      }],
+    }));
+
+    expect(option.series[0].data).toHaveLength(durationHours / bucketHours);
+    expect(option.dataZoom.some((zoom: { type: string }) => zoom.type === "slider")).toBe(true);
+    expect(option.grid.bottom).toBe(64);
   });
 });

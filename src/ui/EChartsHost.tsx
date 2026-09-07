@@ -187,6 +187,3 @@ export function EChartsHost({
     </div>
   );
 }
-
-export const ChartHost = EChartsHost;
-export default EChartsHost;
