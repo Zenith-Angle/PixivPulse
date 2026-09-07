@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
@@ -133,12 +135,24 @@ import {
   type WorkSortKey,
 } from "./workLibrary";
 
-export type DashboardTab = "overview" | "works" | "compare" | "settings";
+const LazyAgentView = lazy(async () => {
+  try { return { default: (await import("./AgentView")).AgentView }; }
+  catch {
+    // An unpacked extension update can remove a chunk still referenced by this tab.
+    // Resolve to a recovery view rather than rejecting React.lazy or auto-reloading.
+    return { default: function AgentLoadFailure() {
+      return <section className="agent-empty" role="alert"><h2>Agent 资源加载失败</h2><p>扩展更新后，已打开的看板可能仍引用旧文件。请刷新看板以加载当前版本。</p><button type="button" className="secondary-button" onClick={() => window.location.reload()}>刷新看板</button><p>本机已保存的作品数据和对话记录不会被删除。</p></section>;
+    } };
+  }
+});
+
+export type DashboardTab = "overview" | "works" | "compare" | "agent" | "settings";
 
 const TAB_LABELS: Record<DashboardTab, string> = {
   overview: "总览",
   works: "作品",
   compare: "比较",
+  agent: "Agent 分析",
   settings: "数据与设置",
 };
 
@@ -439,6 +453,7 @@ function Sidebar({ activeTab, onChange, onOpenOnboarding }: { activeTab: Dashboa
     { key: "overview", icon: <LayoutDashboard size={17} aria-hidden="true" />, hint: "作品集动量、洞察和上升作品" },
     { key: "works", icon: <ImageIcon size={17} aria-hidden="true" />, hint: "按作品查看真实采样变化" },
     { key: "compare", icon: <BarChart3 size={17} aria-hidden="true" />, hint: "把两件作品的绝对值放在同一时间轴" },
+    { key: "agent", icon: <Sparkles size={17} aria-hidden="true" />, hint: "与你的模型对话，按需分析本地作品" },
     { key: "settings", icon: <Settings size={17} aria-hidden="true" />, hint: "同步、导出和隐私限制" },
   ];
   return (
@@ -470,7 +485,7 @@ function Sidebar({ activeTab, onChange, onOpenOnboarding }: { activeTab: Dashboa
       <div className="sidebar-bottom">
         <div className="local-badge"><span className="status-dot" />数据保存在本机</div>
         <button type="button" className="help-link" onClick={onOpenOnboarding} title="重新查看首次使用说明"><Info size={15} aria-hidden="true" />使用说明</button>
-        <p className="version-label">PixivPulse 0.4.20 · 本地优先</p>
+        <p className="version-label">PixivPulse 0.5.8 · 本地优先</p>
       </div>
     </aside>
   );
@@ -1158,8 +1173,8 @@ export function SettingsView({ data, isPreview, error, onSchedule, onShowChips, 
       <section className="setting-section"><div className="section-heading"><div><p className="eyebrow">SYNC POLICY</p><h2>同步策略</h2></div><CalendarClock size={19} aria-hidden="true" /></div><p className="setting-note"><Clock3 size={14} aria-hidden="true" />统计与自动采样统一使用 {BUSINESS_TIME_ZONE_LABEL}；手动同步不会改变自动时刻。</p><Toggle checked={data.settings.scheduledSyncEnabled} onChange={(value) => onSchedule(value, configuredInterval)} label="启用自动同步" description="按北京时间固定刻度运行，例如每 30 分钟固定在整点和半点；必要时会打开临时 Pixiv 标签页并自动关闭。" /><div className="setting-select-row"><div><strong>同步方式与间隔</strong><p>选择“仅手动”即可关闭自动采样；休眠恢复后不会密集补跑。</p></div><label className="select-field"><Clock3 size={15} aria-hidden="true" /><span className="sr-only">同步方式与间隔</span><select value={scheduleValue} onChange={(event) => { const value = event.currentTarget.value; onSchedule(value !== "manual", value === "manual" ? configuredInterval : Number(value)); }}><option value="manual">仅手动</option><option value="0.5">每 30 分钟</option><option value="1">每 1 小时</option><option value="2">每 2 小时</option><option value="4">每 4 小时</option><option value="12">每 12 小时</option><option value="24">每天</option></select></label></div><Toggle checked={data.settings.showPixivChips} onChange={onShowChips} label="在 Pixiv 页面显示轻量提示" description="只显示同步状态小标记；不改变作品页面内容。" /></section>
       <div className="settings-grid"><DataTransferSection isPreview={isPreview} importDisabled={isPreview} importing={storageBusy === "import"} onExportJson={onExportJson} onExportCsv={onExportCsv} onImportFile={onImportFile} /><section className="setting-section"><div className="section-heading"><div><p className="eyebrow">RETENTION RESULT</p><h2>最近整理结果</h2></div><Database size={19} aria-hidden="true" /></div>{maintenanceResult ? <p className="setting-note" role="status"><CheckCircle2 size={14} aria-hidden="true" />保留 {formatCount(maintenanceResult.retainedSamples)} 条样本，删除 {formatCount(maintenanceResult.deletedSamples ?? 0)} 条；{maintenanceResult.pendingReason ? maintenancePendingLabel(maintenanceResult.pendingReason) : "本地整理已完成"}。</p> : <p className="section-description">自动整理在同步后低频执行。前三天完整保留，超过三天后逐级抽稀；写入和删除在同一个浏览器本地事务中完成。</p>}</section></div>
       <StorageCenter model={storageModel} disabled={isPreview} busyAction={storageBusy} onRepairCovers={onRepairCovers} onMaintain={onMaintainData} onChooseBackup={onChooseBackup} />
-      <section className="setting-section"><div className="section-heading"><div><p className="eyebrow">PRIVACY & LIMITATIONS</p><h2>隐私与口径</h2></div><Home size={19} aria-hidden="true" /></div><div className="limitation-list"><p><Check size={16} aria-hidden="true" /><span>作品、快照、观察记录和同步日志都只保存在扩展自己的本地存储中。</span></p><p><Check size={16} aria-hidden="true" /><span>浏览量来自 Pixiv 作品管理页，包含作品详情页与 Home 信息流统计；它不同于 Premium Access Analytics。</span></p><p><Check size={16} aria-hidden="true" /><span>缩略图会直接联系 <code>i.pximg.net</code> CDN；加载失败时使用本地占位图。Pixiv 改版也可能影响解析。</span></p><p><Check size={16} aria-hidden="true" /><span>第一次同步只能建立基线，无法重建安装前的增长；没有足够历史时，洞察会明确显示样本不足。</span></p></div></section>
-      <section className="setting-section danger-section"><div className="section-heading"><div><p className="eyebrow">ACCOUNT BINDING</p><h2>当前账号</h2></div><Trash2 size={19} aria-hidden="true" /></div><AccountIdentity account={data.settings.boundAccount} /><p className="section-description">清空后，所有本地 PixivPulse 历史都会被删除；下一次同步会绑定当前已登录的 Pixiv 账号。</p><button type="button" className="danger-button" onClick={() => onClearData?.()}><Trash2 size={16} aria-hidden="true" />清空本地数据并重新绑定</button></section>
+      <section className="setting-section"><div className="section-heading"><div><p className="eyebrow">PRIVACY & LIMITATIONS</p><h2>隐私与口径</h2></div><Home size={19} aria-hidden="true" /></div><div className="limitation-list"><p><Check size={16} aria-hidden="true" /><span>看板数据保存在扩展本地；开启 Agent 数据分享后，按需查询结果会发送至你配置的 API 服务。</span></p><p><Check size={16} aria-hidden="true" /><span>浏览量来自 Pixiv 作品管理页，包含作品详情页与 Home 信息流统计；它不同于 Premium Access Analytics。</span></p><p><Check size={16} aria-hidden="true" /><span>缩略图会直接联系 <code>i.pximg.net</code> CDN；加载失败时使用本地占位图。Pixiv 改版也可能影响解析。</span></p><p><Check size={16} aria-hidden="true" /><span>第一次同步只能建立基线，无法重建安装前的增长；没有足够历史时，洞察会明确显示样本不足。</span></p></div></section>
+      <section className="setting-section danger-section"><div className="section-heading"><div><p className="eyebrow">ACCOUNT BINDING</p><h2>当前账号</h2></div><Trash2 size={19} aria-hidden="true" /></div><AccountIdentity account={data.settings.boundAccount} /><p className="section-description">清空后，本地作品历史会被删除；下一次同步会绑定当前已登录的 Pixiv 账号。Agent 对话需在 Agent 工作区单独导出或删除。</p><button type="button" className="danger-button" onClick={() => onClearData?.()}><Trash2 size={16} aria-hidden="true" />清空本地数据并重新绑定</button></section>
       <section className="setting-section history-section"><div className="section-heading"><div><p className="eyebrow">SYNC HISTORY</p><h2>同步记录</h2></div><span className="section-note">最近 {Math.min(10, data.runs.length)} 次</span></div>{data.runs.length === 0 ? <p className="muted-copy">尚无同步记录。完成第一次同步后，状态和错误会显示在这里。</p> : <div className="history-table-wrap"><table className="history-table"><thead><tr><th>时间</th><th>触发方式</th><th>结果</th><th>作品</th><th>变化</th><th>备注</th></tr></thead><tbody>{data.runs.slice(0, 10).map((run) => <tr key={run.runId}><td>{formatTimestamp(run.finishedAt ?? run.startedAt)}</td><td>{run.trigger === "scheduled" ? "定时" : run.trigger === "recovery" ? "恢复" : run.trigger === "passive" ? "页面观察" : "手动"}</td><td><RunStatus run={run} isPreview={isPreview} /></td><td>{run.works}</td><td>{run.changedWorks}</td><td>{runNote(run)}</td></tr>)}</tbody></table></div>}</section>
     </div>
   );
@@ -1385,6 +1400,8 @@ export function DashboardApp({ bootstrapRequest = null }: { bootstrapRequest?: D
   const controller = useDashboardData(bootstrapRequest);
   const { data } = controller;
   const [activeTab, setActiveTab] = useState<DashboardTab>("overview");
+  const [agentOpened, setAgentOpened] = useState(false);
+  useEffect(() => { if (activeTab === "agent") setAgentOpened(true); }, [activeTab]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [compareKeys, setCompareKeys] = useState<string[]>([]);
   const [legacyOnboardingSeen] = useState(readLegacyOnboardingSeen);
@@ -1652,7 +1669,8 @@ export function DashboardApp({ bootstrapRequest = null }: { bootstrapRequest?: D
       <main className="dashboard-main">
         <Header activeTab={activeTab} data={data} isPreview={controller.isPreview} isLoading={controller.isLoading} hasLoadedData={controller.hasLoadedData} isSyncing={controller.isSyncing} onSync={() => void handleSync()} />
         {controller.isPreview && <div className="preview-banner" role="status"><Sparkles size={16} aria-hidden="true" /><span><strong>预览数据</strong> · 当前浏览器未连接扩展后台，下面是可交互的本地示例，不代表已完成真实同步。</span></div>}
-        <div className="dashboard-content">{controller.isLoading && !controller.isPreview ? <DashboardInitialLoading /> : !controller.hasLoadedData && controller.error ? <DashboardInitialError error={controller.error} onRetry={() => void controller.refresh()} /> : <>{activeTab === "overview" && <OverviewView analyses={overviewAnalyses} data={overviewPresentation.data} intraday={overviewIntraday} onOpenWork={openWork} onGoToWorks={() => setActiveTab("works")} animationSignal={overviewPresentation.animationEpoch} />}{activeTab === "works" && <WorksView analyses={analyses} intradayByWork={intradayByWork} compareKeys={compareKeys} onToggleCompare={toggleCompare} onOpenWork={openWork} completedRunWorks={newestCompletedRun?.works ?? null} coverCache={data.coverCache} />}{activeTab === "compare" && <CompareView analyses={analyses} compareKeys={compareKeys} onToggleCompare={toggleCompare} onOpenWork={openWork} data={data} />}{activeTab === "settings" && <SettingsView data={data} isPreview={controller.isPreview} error={controller.error} onSchedule={(enabled, interval) => void controller.setSchedule(enabled, interval)} onShowChips={(enabled) => void controller.setShowChips(enabled)} onExportJson={() => void exportJson()} onExportCsv={exportCsv} onOpenOnboarding={openOnboarding} onClearData={requestClearData} storageModel={storageModel} storageBusy={storageBusy} onRepairCovers={() => void repairCovers()} onMaintainData={() => void maintainData()} onChooseBackup={() => void configureBackupDirectory()} onImportFile={(file) => void previewImport(file)} maintenanceResult={maintenanceResult} />}</>}</div>
+        {agentOpened && controller.hasLoadedData && <div hidden={activeTab !== "agent"} className="dashboard-content"><Suspense fallback={<p role="status">正在载入 Agent…</p>}><LazyAgentView data={data} isPreview={controller.isPreview} active={activeTab === "agent"} /></Suspense></div>}
+        <div hidden={activeTab === "agent" && controller.hasLoadedData} className="dashboard-content">{controller.isLoading && !controller.isPreview ? <DashboardInitialLoading /> : !controller.hasLoadedData && controller.error ? <DashboardInitialError error={controller.error} onRetry={() => void controller.refresh()} /> : <>{activeTab === "overview" && <OverviewView analyses={overviewAnalyses} data={overviewPresentation.data} intraday={overviewIntraday} onOpenWork={openWork} onGoToWorks={() => setActiveTab("works")} animationSignal={overviewPresentation.animationEpoch} />}{activeTab === "works" && <WorksView analyses={analyses} intradayByWork={intradayByWork} compareKeys={compareKeys} onToggleCompare={toggleCompare} onOpenWork={openWork} completedRunWorks={newestCompletedRun?.works ?? null} coverCache={data.coverCache} />}{activeTab === "compare" && <CompareView analyses={analyses} compareKeys={compareKeys} onToggleCompare={toggleCompare} onOpenWork={openWork} data={data} />}{activeTab === "settings" && <SettingsView data={data} isPreview={controller.isPreview} error={controller.error} onSchedule={(enabled, interval) => void controller.setSchedule(enabled, interval)} onShowChips={(enabled) => void controller.setShowChips(enabled)} onExportJson={() => void exportJson()} onExportCsv={exportCsv} onOpenOnboarding={openOnboarding} onClearData={requestClearData} storageModel={storageModel} storageBusy={storageBusy} onRepairCovers={() => void repairCovers()} onMaintainData={() => void maintainData()} onChooseBackup={() => void configureBackupDirectory()} onImportFile={(file) => void previewImport(file)} maintenanceResult={maintenanceResult} />}</>}</div>
       </main>
       {selectedAnalysis && <DetailDrawer analysis={selectedAnalysis} intraday={selectedIntraday} samples={data.samples} observations={data.observations} observationBatches={data.observationBatches} onClose={() => setSelectedKey(null)} />}
       {shouldShowOnboarding && <OnboardingModal onConfirm={(scheduled) => void finishOnboarding(scheduled)} onLater={() => void dismissOnboarding(true)} onClose={() => void dismissOnboarding(false)} error={onboardingError} />}

@@ -11,6 +11,11 @@ PixivPulse 的发布包包含下列开源运行时依赖。每个依赖仍由其
 | [React](https://github.com/facebook/react) | 19.2.8 | MIT |
 | [React DOM](https://github.com/facebook/react) | 19.2.8 | MIT |
 | [Scheduler](https://github.com/facebook/react) | 0.27.0 | MIT |
+| [OpenAI JavaScript SDK](https://github.com/openai/openai-node) | 7.10.0 | Apache-2.0 |
+| [react-markdown](https://github.com/remarkjs/react-markdown) | 10.1.0 | MIT |
+| [remark-gfm](https://github.com/remarkjs/remark-gfm) | 4.0.1 | MIT |
+
+Markdown 解析器及其传递运行时依赖的许可证随包复制，完整包名、版本和许可证文件映射见发布包 `third-party-licenses/runtime-manifest.json`。
 
 ## Apache ECharts Notice
 

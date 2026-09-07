@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import sharp from "sharp";
 
@@ -41,3 +41,19 @@ await Promise.all([
     resolve(thirdPartyOutput, target),
   )),
 ]);
+
+// Include licenses for the Agent's transitive Markdown and protocol runtime too.
+const lock = JSON.parse(await readFile(resolve(root, "package-lock.json"), "utf8"));
+const notices = [];
+for (const [location, metadata] of Object.entries(lock.packages)) {
+  if (!location.startsWith("node_modules/") || metadata.dev) continue;
+  const directory = resolve(root, location);
+  const entries = await readdir(directory).catch(() => []);
+  const licenses = entries.filter((name) => /^(license|licence|copying|notice)(\.|$)/i.test(name));
+  if (!licenses.length) continue;
+  const pkg = JSON.parse(await readFile(resolve(directory, "package.json"), "utf8"));
+  const prefix = location.replaceAll(/[\\/]/g, "_");
+  for (const name of licenses) await copyFile(resolve(directory, name), resolve(thirdPartyOutput, `${prefix}-${name}`));
+  notices.push({ name: pkg.name, version: pkg.version, license: pkg.license, files: licenses.map((name) => `${prefix}-${name}`) });
+}
+await writeFile(resolve(thirdPartyOutput, "runtime-manifest.json"), JSON.stringify(notices, null, 2));

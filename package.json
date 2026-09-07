@@ -1,6 +1,6 @@
 {
   "name": "pixiv-pulse",
-  "version": "0.4.20",
+  "version": "0.5.8",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -29,8 +29,11 @@
     "echarts": "6.1.0",
     "idb": "8.0.3",
     "lucide-react": "1.37.0",
+    "openai": "^7.10.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "6.9.1",

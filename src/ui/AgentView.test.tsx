@@ -1,0 +1,161 @@
+import "fake-indexeddb/auto";
+import { deleteDB } from "idb";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentView } from "./AgentView";
+import { createDemoData } from "./demoData";
+import { loadAgentConfig, listConversations, saveConversation, saveAgentConfig } from "../agent/storage";
+import { DEFAULT_AGENT_CONFIG } from "../agent/types";
+import * as runner from "../agent/runner";
+
+beforeEach(async () => { await deleteDB("pixivpulse-agent"); sessionStorage.clear(); localStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+describe("Agent workspace", () => {
+  it("restores the last selected conversation on re-entry and remount instead of a new draft", async () => {
+    const data = createDemoData();
+    for (const [id, at] of [["older", "2026-09-01"], ["newer", "2026-09-02"]]) await saveConversation({ id: id!, title: id!, accountId: "preview", updatedAt: at!, messages: [{ id: id!, role: "user", content: `内容 ${id}`, status: "complete", at: at!, traces: [] }] });
+    const view = render(<AgentView data={data} isPreview active />);
+    await screen.findByText("内容 newer");
+    fireEvent.click(screen.getByRole("button", { name: "older" }));
+    await screen.findByText("内容 older");
+    fireEvent.click(screen.getByRole("button", { name: "新对话" }));
+    expect(screen.queryByText("内容 older")).not.toBeInTheDocument();
+    view.rerender(<AgentView data={data} isPreview active={false} />);
+    view.rerender(<AgentView data={data} isPreview active />);
+    await screen.findByText("内容 older");
+    view.unmount(); render(<AgentView data={data} isPreview active />);
+    await screen.findByText("内容 older");
+    expect(screen.queryByText("内容 newer")).not.toBeInTheDocument();
+  });
+  it("copies Markdown, edits drafts and forks historical retries without losing later turns", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
+    const messages = ["第一问", "**第一答**", "第二问", "第二答"].map((content, index) => ({ id: `m${index}`, role: index % 2 ? "assistant" as const : "user" as const, content, at: "now", status: "complete" as const, traces: [] }));
+    await saveConversation({ id: "original", accountId: "preview", title: "原对话", updatedAt: "now", messages });
+    const clipboard = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboard } });
+    const run = vi.spyOn(runner, "runAgent").mockImplementation(async (_c, history, _d, _p, _s, hooks) => {
+      expect(history.map(row => row.content)).toEqual(["第一问"]);
+      hooks.onText("新的第一答");
+    });
+    render(<AgentView data={createDemoData()} isPreview />);
+    const answer = (await screen.findByText("第一答")).closest("article")!;
+    fireEvent.click(within(answer).getByRole("button", { name: "复制" }));
+    await waitFor(() => expect(clipboard).toHaveBeenCalledWith("**第一答**"));
+    fireEvent.click(within(answer).getByRole("button", { name: "引用追问" }));
+    expect((screen.getByRole("textbox", { name: "向 Agent 提问" }) as HTMLTextAreaElement).value).toContain("> **第一答**");
+    expect(run).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByRole("button", { name: "重新编辑" })[1]!);
+    expect(screen.getByRole("textbox", { name: "向 Agent 提问" })).toHaveValue("第二问");
+    fireEvent.click(within(answer).getByRole("button", { name: "从此处重试" }));
+    await screen.findByText("新的第一答");
+    await waitFor(async () => {
+      const rows = await listConversations("preview");
+      expect(rows).toHaveLength(2);
+      expect(rows.find(row => row.id === "original")!.messages).toEqual(messages);
+      expect(rows.find(row => row.id !== "original")!.messages.map(row => row.content)).toEqual(["第一问", "新的第一答"]);
+    });
+  });
+  it("saves custom reading limits and applies recommended budgets to an existing config", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, inputBudget: 24000, totalInputBudget: 60000 });
+    render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "连接配置" }));
+    expect(screen.getByRole("textbox", { name: "回答偏好" })).toHaveValue(DEFAULT_AGENT_CONFIG.instructions);
+    fireEvent.change(screen.getByRole("combobox", { name: /^正文阅读深度/ }), { target: { value: "custom" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "每篇累计采样字数" }), { target: { value: "2200" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: /^每篇累计覆盖/ }), { target: { value: "45" } });
+    fireEvent.click(screen.getByRole("button", { name: /^使用推荐输入预算/ }));
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await screen.findByText("连接配置已保存。");
+    expect(await loadAgentConfig()).toMatchObject({ readingDepth: "custom", customReadingChars: 2200, customReadingPercent: 45, inputBudget: 64000, totalInputBudget: 160000 });
+  });
+  it("shows live progress and flushes the last text burst while generation remains open", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
+    vi.spyOn(runner, "runAgent").mockImplementation(async (_c, _m, _d, _p, signal, hooks) => {
+      hooks.onProgress?.("正在定位作品"); hooks.onText("前半"); hooks.onText("后半");
+      return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+    });
+    render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "向上展开输入框" }));
+    expect(screen.getByRole("button", { name: "收起输入框" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.change(screen.getByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "进度测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText("前半后半");
+    expect(screen.getByText(/正在定位作品 · 已用时/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    await screen.findByText("生成已停止，可重试。");
+  });
+  it("leaves settings when creating a conversation", async () => {
+    render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "连接配置" }));
+    fireEvent.click(screen.getByRole("button", { name: "新对话" }));
+    expect(screen.getByRole("textbox", { name: "向 Agent 提问" })).toBeInTheDocument();
+  });
+  it("allows independent concurrent conversations and stops only the selected run", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
+    const signals: AbortSignal[] = [];
+    vi.spyOn(runner, "runAgent").mockImplementation(async (_c, _m, _d, _p, signal) => {
+      signals.push(signal);
+      return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+    });
+    render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "会话甲" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(signals).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "新对话" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "会话乙" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(signals).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: /^会话甲/ }));
+    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    await screen.findByText("生成已停止，可重试。");
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /^会话乙/ }));
+    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    await waitFor(async () => expect((await listConversations("preview")).every(row => row.messages.at(-1)?.status === "stopped")).toBe(true));
+  });
+  it("starts with DeepSeek Responses and requires explicit data sharing", async () => {
+    render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "连接配置" }));
+    expect(screen.getByLabelText("API 协议")).toHaveValue("responses");
+    expect(screen.getByLabelText("Model name")).toHaveValue("deepseek-v4-flash");
+    expect(screen.getByRole("checkbox", { name: /^允许 Agent/ })).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "test-ui-key" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /^允许 Agent/ }));
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await screen.findByText("连接配置已保存。");
+    expect((await loadAgentConfig()).shareData).toBe(true);
+    expect((await loadAgentConfig()).apiKey).toBe("test-ui-key");
+  });
+  it("saves the real user question, accumulated answer and traces; restores and deletes conversation", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-ui-key", shareData: true });
+    vi.spyOn(runner, "runAgent").mockImplementation(async (_config, messages, _data, _preview, _signal, hooks) => {
+      expect(messages.at(-1)?.content).toBe("请分析收藏");
+      hooks.onText("基于真实记录 [S1]");
+      await hooks.onTrace({ id: "S1", name: "get_overview", arguments: "{}", result: '{"views":42}', at: "now" });
+    });
+    const view = render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "请分析收藏" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByRole("button", { name: "重新生成" });
+    const saved = await listConversations("preview");
+    expect(saved[0]?.messages[1]).toMatchObject({ status: "complete", content: "基于真实记录 [S1]", traces: [{ id: "S1" }] });
+    view.unmount(); render(<AgentView data={createDemoData()} isPreview />);
+    await screen.findByText("基于真实记录 [S1]");
+    fireEvent.click(screen.getByRole("button", { name: "删除对话 请分析收藏" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await listConversations("preview")).toEqual([]);
+  });
+  it("aborts an active run and marks the saved answer as stopped", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-ui-key" });
+    vi.spyOn(runner, "runAgent").mockImplementation(async (_c, _m, _d, _p, signal) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true })));
+    render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "停止测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(runner.runAgent).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    await screen.findByText("生成已停止，可重试。");
+    expect((await listConversations("preview"))[0]?.messages[1]?.status).toBe("stopped");
+  });
+});

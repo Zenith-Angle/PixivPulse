@@ -1,5 +1,6 @@
 import { primeDashboardDataRequest } from "../../src/ui/dashboardDataRequest";
 import "./styles.css";
+import "../../src/ui/agent.css";
 
 const root = document.getElementById("root");
 

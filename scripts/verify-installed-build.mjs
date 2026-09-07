@@ -50,8 +50,10 @@ if (remoteScript) throw new Error(`Installed Popup contains a remote script: ${r
 if (localhostReference) throw new Error(`Installed extension depends on ${localhostReference[0]}`);
 if (!localModuleScript) throw new Error("Installed Popup does not contain a bundled local module script");
 if (manifest.action?.default_popup !== "popup.html") throw new Error("Installed manifest does not point to popup.html");
-if (!/^0\.4\.\d+$/.test(packageJson.version)) throw new Error(`PixivPulse patch releases must stay on 0.4.x, received ${packageJson.version}`);
+if (!/^\d+\.\d+\.\d+$/.test(packageJson.version)) throw new Error(`Invalid semantic version: ${packageJson.version}`);
 if (manifest.version !== packageJson.version) throw new Error(`Manifest version ${manifest.version} does not match package version ${packageJson.version}`);
+if (!manifest.optional_host_permissions?.includes("https://*/*") || !manifest.optional_host_permissions?.includes("http://*/*")) throw new Error("Agent optional API origin permissions are missing");
+if (manifest.host_permissions?.some((origin) => origin === "<all_urls>" || origin === "https://*/*" || origin === "http://*/*")) throw new Error("Agent API access must remain optional, not automatically granted");
 
 const dashboardScriptPath = dashboardHtml.match(/<script\b[^>]*\bsrc=["'](\/[^"']+\.js)["']/i)?.[1];
 if (!dashboardScriptPath) throw new Error("Installed dashboard does not contain a bundled local module script");
@@ -62,7 +64,7 @@ const dashboardSources = await readReachableJavaScript(
   installRoot,
 );
 const bundledVersionLabels = new Set(
-  javaScriptSources.flatMap((source) => source.match(/PixivPulse 0\.4\.\d+/g) ?? []),
+  javaScriptSources.flatMap((source) => source.match(/PixivPulse \d+\.\d+\.\d+/g) ?? []),
 );
 const expectedVersionLabel = `PixivPulse ${packageJson.version}`;
 if (!dashboardSources.some((source) => source.includes(expectedVersionLabel))) {
@@ -72,5 +74,18 @@ const staleVersionLabels = [...bundledVersionLabels].filter((label) => label !==
 if (staleVersionLabels.length > 0) {
   throw new Error(`Installed extension contains stale version labels: ${staleVersionLabels.join(", ")}`);
 }
+
+// Check hashed JS/CSS dependencies, not just entry scripts and version labels.
+for (const source of [...javaScriptSources, dashboardHtml, popupHtml]) {
+  for (const match of source.matchAll(/["'`]\/?((?:assets|chunks)\/[^"'`\s]+\.(?:css|js))["'`]/g)) {
+    const asset = path.resolve(installRoot, match[1]);
+    if (!asset.startsWith(installRoot + path.sep)) throw new Error("Asset path escaped the install root");
+    await readFile(asset);
+  }
+}
+const cssFiles = [...dashboardHtml.matchAll(/href=["']\/(assets\/[^"']+\.css)["']/g)].map(match => match[1]);
+const initialStyles = await Promise.all(cssFiles.map(file => readFile(path.join(installRoot, file), "utf8")));
+if (!initialStyles.some(css => css.includes(".agent-workspace"))) throw new Error("Agent styles must load with the dashboard entry");
+if (javaScriptSources.some(source => /assets\/AgentView-[^"'`]+\.css/.test(source))) throw new Error("Agent CSS must not depend on a lazy preload");
 
 console.log(`Installed extension ${packageJson.version} is self-contained, version-aligned, and bundled locally.`);
