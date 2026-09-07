@@ -1,5 +1,7 @@
 import type { EChartsCoreOption } from "echarts/core";
 import { formatBeijingTimestamp } from "../domain/time";
+import type { ChartTimeRange } from "./chartTimeRange";
+import { buildCompareBuckets, compareBucketLayout, compareBucketLabel } from "./compareBuckets";
 
 export type DashboardChartMetric = "views" | "bookmarks" | "likes" | "comments";
 export type CompareValueMode = "total" | "delta";
@@ -347,30 +349,35 @@ export const buildCompareChartOption = (series: ChartSeriesInput[]): EChartsCore
   };
 };
 
-/** Compare multiple works on their actual timestamps as totals or range-relative deltas. */
+/** Compare totals or observed net changes in shared time buckets. */
 export const buildAbsoluteCompareChartOption = ({
   series,
   metric,
   valueMode = "total",
+  range = { preset: "all", startMs: null, endMs: null },
 }: {
   series: AbsoluteChartSeriesInput[];
   metric: DashboardChartMetric;
   valueMode?: CompareValueMode;
+  range?: ChartTimeRange;
 }): EChartsCoreOption => {
   const label = DASHBOARD_CHART_METRIC_LABELS[metric];
   const valueLabel = valueMode === "delta" ? `${label}增量` : `${label}总数`;
+  const { start, end, hours } = compareBucketLayout(series.flatMap((item) => item.points), range);
   const normalized = series.map((item) => {
     const points = normalizeTimePoints(item.points);
-    const baseline = points[0]?.[1] ?? 0;
     return {
       ...item,
       points: valueMode === "delta"
-        ? points.map(([timestamp, value, runId, sequence]) => [timestamp, value - baseline, runId, sequence] as [number, number, string, number])
+        ? buildCompareBuckets(item.points, start, end, hours).map((bucket) => [
+          (bucket.start + bucket.end) / 2, bucket.value, bucket.start, bucket.end,
+        ])
         : points,
     };
   });
   const maxPointCount = Math.max(0, ...normalized.map((item) => item.points.length));
   const formatValue = (value: unknown): string => {
+    if (value == null) return "—";
     const numeric = Number(value);
     const formatted = formatAxisNumber(numeric);
     return valueMode === "delta" && numeric > 0 ? `+${formatted}` : formatted;
@@ -387,9 +394,14 @@ export const buildAbsoluteCompareChartOption = ({
     },
     tooltip: {
       trigger: "axis",
+      confine: valueMode === "delta",
       axisPointer: {
         type: "line",
-        label: { formatter: (params: { value: string | number }) => `${formatAxisTime(params.value)} · 采样值` },
+        label: { formatter: (params: { value: string | number }) => {
+          if (valueMode === "total") return `${formatAxisTime(params.value)} · 采样值`;
+          const point = normalized[0]?.points.find((point) => point[0] === Number(params.value));
+          return point ? `${formatAxisTime(Number(point[2]))} 至 ${formatAxisTime(Number(point[3]))} · 分段增量` : formatAxisTime(params.value);
+        } },
       },
       valueFormatter: formatValue,
       order: "valueDesc",
@@ -397,6 +409,8 @@ export const buildAbsoluteCompareChartOption = ({
     xAxis: {
       type: "time",
       boundaryGap: false,
+      min: valueMode === "delta" ? start : undefined,
+      max: valueMode === "delta" ? end : undefined,
       axisLabel: {
         hideOverlap: true,
         formatter: (value: number) => formatAxisTime(value),
@@ -406,7 +420,7 @@ export const buildAbsoluteCompareChartOption = ({
     },
     yAxis: {
       type: "value",
-      name: valueLabel,
+      name: valueMode === "delta" ? `${valueLabel} / ${compareBucketLabel(hours)}` : valueLabel,
       nameLocation: "end",
       nameGap: 10,
       nameRotate: 0,
@@ -420,9 +434,12 @@ export const buildAbsoluteCompareChartOption = ({
       name: item.name,
       type: "line",
       data: item.points,
-      dimensions: [{ name: "时间", type: "time" }, { name: valueLabel, type: "float" }, { name: "同步", type: "ordinal" }, { name: "顺序", type: "int" }],
+      dimensions: valueMode === "delta"
+        ? [{ name: "时间", type: "time" }, { name: valueLabel, type: "float" }, { name: "段起点", type: "time" }, { name: "段终点", type: "time" }]
+        : [{ name: "时间", type: "time" }, { name: valueLabel, type: "float" }, { name: "同步", type: "ordinal" }, { name: "顺序", type: "int" }],
       encode: { x: 0, y: 1, tooltip: 1 },
       ...lineDensityOptions(item.points.length),
+      ...(valueMode === "delta" ? { smooth: false, showSymbol: true, symbolSize: 5 } : {}),
       connectNulls: false,
       lineStyle: { color: item.color, width: 3 },
       itemStyle: { color: item.color, borderColor: "#ffffff", borderWidth: 2 },

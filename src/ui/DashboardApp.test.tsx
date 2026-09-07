@@ -107,7 +107,11 @@ describe("PixivPulse dashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "增量" }));
     expect(screen.getByRole("heading", { name: "收藏增量曲线" })).toBeTruthy();
     expect(screen.getByRole("img", { name: "2 部作品收藏增量比较折线图" })).toBeTruthy();
-    expect(screen.getByText("每部作品以当前所选时间范围内的第一个有效采样为 0，显示之后增加或减少的绝对数量。")).toBeTruthy();
+    expect(screen.getByText("分段净增量 · 无观察时段留空")).toBeTruthy();
+    expect(screen.getByText("分段净增量")).toBeTruthy();
+    expect(screen.queryByText("平滑趋势")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "总量" }));
+    expect(screen.getByText("平滑趋势")).toBeTruthy();
   });
 
   it("allows up to five comparison works and disables a sixth choice", () => {

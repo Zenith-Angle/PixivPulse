@@ -24,6 +24,7 @@ export interface EChartsHostProps {
   className?: string;
   height?: number | string;
   compact?: boolean;
+  presentation?: "trend" | "buckets";
 }
 
 const cn = (...parts: Array<string | false | null | undefined>): string => parts.filter(Boolean).join(" ");
@@ -73,6 +74,7 @@ export function EChartsHost({
   className,
   height = 238,
   compact = false,
+  presentation = "trend",
 }: EChartsHostProps) {
   const chartElementRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<ECharts | null>(null);
@@ -87,7 +89,7 @@ export function EChartsHost({
 
   const chartAria = {
     enabled: !compact,
-    label: { description: `${ariaLabel}。平滑趋势；提示数值为原始采样。` },
+    label: { description: `${ariaLabel}。${presentation === "buckets" ? "按所选时间范围合并的分段净增量。" : "平滑趋势；提示数值为原始采样。"}` },
   };
 
   useEffect(() => {
@@ -174,12 +176,12 @@ export function EChartsHost({
     } catch {
       // A disposed chart can race an option update during StrictMode cleanup.
     }
-  }, [option, reducedMotion, ariaLabel, compact]);
+  }, [option, reducedMotion, ariaLabel, compact, presentation]);
 
   const style = { height: typeof height === "number" ? `${height}px` : height };
   return (
     <div className={cn("echarts-host", className)} style={style}>
-      {hasData && !compact && <span className="chart-trend-label">平滑趋势</span>}
+      {hasData && !compact && <span className="chart-trend-label">{presentation === "buckets" ? "分段净增量" : "平滑趋势"}</span>}
       {hasData ? <div ref={chartElementRef} className={cn("echarts-canvas", rendered && "echarts-rendered")} role="img" aria-label={ariaLabel} aria-describedby={summaryId} /> : <div className="chart-empty" role="img" aria-label={ariaLabel} aria-describedby={summaryId}><span aria-hidden="true">∿</span><span>{emptyMessage}</span></div>}
       <p id={summaryId} className="chart-summary">{summary}</p>
     </div>

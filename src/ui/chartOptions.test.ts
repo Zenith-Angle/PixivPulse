@@ -57,7 +57,7 @@ describe("rendered chart behaviour", () => {
     document.body.append(host);
     const chart = init(host, undefined, { renderer: "svg", width: 800, height: 300 });
     try {
-      const source = buildAbsoluteCompareChartOption({ metric: "views", valueMode, series: [
+      const source = buildAbsoluteCompareChartOption({ metric: "views", valueMode, range: { preset: "30d", startMs: Date.parse("2026-09-01T00:00:00Z"), endMs: Date.parse("2026-09-04T00:00:00Z") }, series: [
         { key: "a", name: "Alpha", color: "red", points: [10, 20, 50, 60].map((value, i) => ({ at: `2026-09-0${i + 1}T00:00:00Z`, value })) },
         { key: "b", name: "Beta", color: "green", points: [10, 40, 30, 40].map((value, i) => ({ at: `2026-09-0${i + 1}T00:00:00Z`, value })) },
       ] });
@@ -67,7 +67,7 @@ describe("rendered chart behaviour", () => {
         await vi.waitFor(() => {
           const tooltip = host.textContent ?? "";
           expect(tooltip).toContain(higher);
-          expect(tooltip).toContain("采样值");
+          expect(tooltip).toContain(valueMode === "delta" ? "分段增量" : "采样值");
           expect(tooltip.match(/Alpha/g)).toHaveLength(1);
           expect(tooltip.match(/Beta/g)).toHaveLength(1);
           expect(tooltip.indexOf(higher), `point ${dataIndex}: ${tooltip}`).toBeLessThan(tooltip.indexOf(lower));
@@ -250,7 +250,7 @@ describe("dashboard ECharts option builders", () => {
     expect(option.series[0].sampling).toBeUndefined();
   });
 
-  it("compares absolute increments from each work's first point in the selected range", () => {
+  it("compares bucket increments instead of cumulative growth since the first point", () => {
     const option = optionRecord(buildAbsoluteCompareChartOption({
       metric: "views",
       valueMode: "delta",
@@ -268,9 +268,15 @@ describe("dashboard ECharts option builders", () => {
     }));
 
     expect(option.xAxis.type).toBe("time");
-    expect(option.yAxis.name).toBe("浏览增量");
-    expect(option.series[0].data.map((point: unknown[]) => point[1])).toEqual([0, 30, 25]);
-    expect(option.series[1].data.map((point: unknown[]) => point[1])).toEqual([0, -20]);
+    expect(option.yAxis.name).toBe("浏览增量 / 1 小时");
+    expect(option.series[0].data.map((point: unknown[]) => point[1])).toEqual([30, -5, null]);
+    expect(option.series[1].data.map((point: unknown[]) => point[1])).toEqual([null, null, -20]);
+    expect(option.series[0].smooth).toBe(false);
+    expect(buildTrendSeries(option)).toHaveLength(2);
+    expect(option.tooltip.formatter).toBeUndefined();
+    expect(option.tooltip.extraCssText).toBeUndefined();
+    expect(option.series[1].tooltip).toBeUndefined();
+    expect(option.tooltip.axisPointer.label.formatter({ value: option.series[0].data[0][0] })).toBe("8/31 08:00 至 8/31 09:00 · 分段增量");
     expect(option.tooltip.valueFormatter(30)).toBe("+30");
     expect(option.tooltip.valueFormatter(-20)).toBe("-20");
     expect(option.tooltip.order).toBe("valueDesc");

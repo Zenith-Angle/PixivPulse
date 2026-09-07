@@ -110,6 +110,7 @@ import {
   type DashboardChartMetric,
 } from "./chartOptions";
 import { resolveChartTimeRange, type ChartTimeRange, type ChartTimeRangePreset } from "./chartTimeRange";
+import { buildCompareBuckets, compareBucketLayout, compareBucketLabel } from "./compareBuckets";
 import { buildFollowerAnalytics, type AccountFollowerSample } from "./followerAnalytics";
 import {
   buildRankingEntries,
@@ -469,7 +470,7 @@ function Sidebar({ activeTab, onChange, onOpenOnboarding }: { activeTab: Dashboa
       <div className="sidebar-bottom">
         <div className="local-badge"><span className="status-dot" />数据保存在本机</div>
         <button type="button" className="help-link" onClick={onOpenOnboarding} title="重新查看首次使用说明"><Info size={15} aria-hidden="true" />使用说明</button>
-        <p className="version-label">PixivPulse 0.4.18 · 本地优先</p>
+        <p className="version-label">PixivPulse 0.4.19 · 本地优先</p>
       </div>
     </aside>
   );
@@ -1067,16 +1068,19 @@ const MAX_COMPARE_WORKS = 5;
 const SERIES_COLORS = ["#007eaf", "#ff6b5e", "#2f8f6b", "#b7791f", "#9c5b94"];
 const COMPARE_CHART_METRICS = ["views", "bookmarks", "likes"] as const satisfies readonly DashboardChartMetric[];
 
-function CompareChart({ series, metric, valueMode }: { series: AbsoluteCompareSeries[]; metric: DashboardChartMetric; valueMode: CompareValueMode }) {
+function CompareChart({ series, metric, valueMode, range }: { series: AbsoluteCompareSeries[]; metric: DashboardChartMetric; valueMode: CompareValueMode; range: ChartTimeRange }) {
   const allPoints = series.flatMap((item) => item.points);
-  const drawableSeriesCount = series.filter((item) => item.points.length >= 2).length;
+  const { start, end, hours } = compareBucketLayout(allPoints, range);
+  const drawableSeriesCount = series.filter((item) => valueMode === "delta"
+    ? buildCompareBuckets(item.points, start, end, hours).some((bucket) => bucket.value != null)
+    : item.points.length >= 2).length;
   const chartSeries: AbsoluteChartSeriesInput[] = series.map((item) => ({
     key: item.analysis.work.key,
     name: item.analysis.work.title,
     color: item.color,
     points: item.points,
   }));
-  const option = useMemo(() => buildAbsoluteCompareChartOption({ series: chartSeries, metric, valueMode }), [chartSeries, metric, valueMode]);
+  const option = useMemo(() => buildAbsoluteCompareChartOption({ series: chartSeries, metric, valueMode, range }), [chartSeries, metric, valueMode, range]);
   const metricLabel = DASHBOARD_CHART_METRIC_LABELS[metric];
   const valueLabel = valueMode === "delta" ? "增量" : "总量绝对值";
   return (
@@ -1085,19 +1089,20 @@ function CompareChart({ series, metric, valueMode }: { series: AbsoluteCompareSe
       hasData={series.length >= 2 && drawableSeriesCount >= 2}
       ariaLabel={`${series.length} 部作品${metricLabel}${valueLabel}比较折线图`}
       emptyMessage={`至少两部所选作品需要各有两次有效${metricLabel}采样，才能绘制${valueLabel}比较曲线。`}
-      summary={`${series.length} 部作品，${allPoints.length} 个${metricLabel}${valueLabel}采样点；横轴按北京时间的真实采样时刻绘制。`}
+      summary={valueMode === "delta" ? `${series.length} 部作品，每 ${compareBucketLabel(hours)} ${metricLabel}净增量；北京时间。` : `${series.length} 部作品，${allPoints.length} 个${metricLabel}${valueLabel}采样点；横轴按北京时间的真实采样时刻绘制。`}
       height={286}
       className="compare-chart"
+      presentation={valueMode === "delta" ? "buckets" : "trend"}
     />
   );
 }
 
-const absoluteTimelinePoints = (points: WorkTimelinePoint[], metric: DashboardChartMetric) => {
+const absoluteTimelinePoints = (points: WorkTimelinePoint[], metric: DashboardChartMetric, preserveMissing = false) => {
   return points
     .slice()
     .sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
     .map((point, sequence) => ({ at: point.at, value: point.metrics[metric], runId: point.runId, sequence }))
-    .filter((point) => point.value != null && Number.isFinite(point.value));
+    .filter((point) => preserveMissing || (point.value != null && Number.isFinite(point.value)));
 };
 
 export function CompareView({ analyses, compareKeys, onToggleCompare, onOpenWork, data }: { analyses: WorkAnalysis[]; compareKeys: string[]; onToggleCompare: (key: string) => void; onOpenWork: (key: string) => void; data?: DashboardData }) {
@@ -1107,11 +1112,11 @@ export function CompareView({ analyses, compareKeys, onToggleCompare, onOpenWork
   const range = useMemo(() => resolvedRange(rangeValue), [rangeValue]);
   const selected = compareKeys.slice(0, MAX_COMPARE_WORKS).map((key) => analyses.find((analysis) => analysis.work.key === key)).filter((analysis): analysis is WorkAnalysis => Boolean(analysis));
   const series = selected.map((analysis, index) => {
-    const timeline = data && range ? buildWorkTimeline(analysis.work.key, data.samples, data.observations, range, data.observationBatches) : analysis.sparkline.map((point, sequence) => ({ workKey: analysis.work.key, at: point.at, runId: `legacy-${sequence}`, metrics: { views: point.views, likes: point.likes, bookmarks: point.bookmarks, comments: null, rank: null, responses: null, illustrations: null } }));
+    const timeline = data && range ? buildWorkTimeline(analysis.work.key, data.samples, data.observations, valueMode === "delta" ? { startMs: null, endMs: range.endMs } : range, data.observationBatches) : analysis.sparkline.map((point, sequence) => ({ workKey: analysis.work.key, at: point.at, runId: `legacy-${sequence}`, metrics: { views: point.views, likes: point.likes, bookmarks: point.bookmarks, comments: null, rank: null, responses: null, illustrations: null } }));
     return {
       analysis,
       color: SERIES_COLORS[index] ?? "#00a7e9",
-      points: absoluteTimelinePoints(timeline, metric),
+      points: absoluteTimelinePoints(timeline, metric, valueMode === "delta"),
     };
   });
   return (
@@ -1121,7 +1126,7 @@ export function CompareView({ analyses, compareKeys, onToggleCompare, onOpenWork
         {analyses.length === 0 ? <p className="muted-copy">同步后可从作品列表选择比较对象。</p> : analyses.map((analysis) => { const checked = compareKeys.includes(analysis.work.key); const disabled = !checked && selected.length >= MAX_COMPARE_WORKS; return <label key={analysis.work.key} className={cn("picker-item", checked && "selected", disabled && "disabled")}><input type="checkbox" checked={checked} disabled={disabled} onChange={() => onToggleCompare(analysis.work.key)} /><Thumbnail work={analysis.work} /><span><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentTypeForWork(analysis.work))} · {workConfidence(analysis)}</small></span></label>; })}
       </section>
       {selected.length > 0 && <section className="compare-work-summary" aria-label="已选作品当前总量">{selected.map((analysis, index) => { const metrics = analysis.latestSample?.metrics ?? analysis.work.metrics; return <article key={analysis.work.key} style={{ "--series-color": SERIES_COLORS[index] } as React.CSSProperties}><div className="compare-work-heading"><Thumbnail work={analysis.work} /><button type="button" onClick={() => onOpenWork(analysis.work.key)}><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentTypeForWork(analysis.work))}</small></button></div><div className="compare-work-metrics"><span>浏览<strong><AnimatedNumber value={formatCount(metrics.views)} comparisonValue={metrics.views} /></strong></span><span>收藏<strong><AnimatedNumber value={formatCount(metrics.bookmarks)} comparisonValue={metrics.bookmarks} /></strong></span><span>获赞<strong><AnimatedNumber value={formatCount(metrics.likes)} comparisonValue={metrics.likes} /></strong></span></div></article>; })}</section>}
-      {selected.length === 0 ? <EmptyState icon={<BarChart3 size={22} />} title="还没有比较对象" body="从上方选择至少两件作品，比较页会绘制它们的历史曲线。" /> : selected.length === 1 ? <EmptyState icon={<BarChart3 size={22} />} title="还差一件作品" body="再选择一件作品后，即可比较浏览、收藏和获赞的总量或增量曲线。" /> : <section className="section-band compare-band"><div className="section-heading"><div><p className="eyebrow">ABSOLUTE METRIC HISTORY</p><h2>{DASHBOARD_CHART_METRIC_LABELS[metric]}{valueMode === "delta" ? "增量" : "绝对值"}曲线</h2></div><span className="section-note">横轴：北京时间 · 纵轴：{valueMode === "delta" ? "相对范围起点的绝对增量" : "累计总量"}</span></div><div className="compare-chart-controls"><div className="compare-chart-selectors"><MetricSelector value={metric} onChange={setMetric} label="比较指标" metrics={COMPARE_CHART_METRICS} /><div className="compare-mode-selector" role="group" aria-label="数值口径"><button type="button" className={cn(valueMode === "total" && "active")} aria-pressed={valueMode === "total"} onClick={() => setValueMode("total")}>总量</button><button type="button" className={cn(valueMode === "delta" && "active")} aria-pressed={valueMode === "delta"} onClick={() => setValueMode("delta")}>增量</button></div></div><ChartRangeControl value={rangeValue} onChange={setRangeValue} /></div><div className="chart-wrap"><CompareChart series={series} metric={metric} valueMode={valueMode} /></div><div className="compare-legend">{series.map((item) => <button type="button" key={item.analysis.work.key} className="legend-item" onClick={() => onOpenWork(item.analysis.work.key)}><span className="legend-dot" style={{ backgroundColor: item.color }} />{item.analysis.work.title}<ChevronRight size={14} aria-hidden="true" /></button>)}</div>{valueMode === "delta" && <p className="chart-footnote"><Info size={14} aria-hidden="true" />每部作品以当前所选时间范围内的第一个有效采样为 0，显示之后增加或减少的绝对数量。</p>}{series.some((item) => item.points.length < 2) && <p className="chart-footnote"><Info size={14} aria-hidden="true" />所选范围内不足两次有效{DASHBOARD_CHART_METRIC_LABELS[metric]}观察的作品不会被绘制。</p>}</section>}
+      {selected.length === 0 ? <EmptyState icon={<BarChart3 size={22} />} title="还没有比较对象" body="从上方选择至少两件作品，比较页会绘制它们的历史曲线。" /> : selected.length === 1 ? <EmptyState icon={<BarChart3 size={22} />} title="还差一件作品" body="再选择一件作品后，即可比较浏览、收藏和获赞的总量或增量曲线。" /> : <section className="section-band compare-band"><div className="section-heading"><div><p className="eyebrow">ABSOLUTE METRIC HISTORY</p><h2>{DASHBOARD_CHART_METRIC_LABELS[metric]}{valueMode === "delta" ? "增量" : "绝对值"}曲线</h2></div><span className="section-note">横轴：北京时间 · 纵轴：{valueMode === "delta" ? `每 ${compareBucketLabel(compareBucketLayout(series.flatMap((item) => item.points), range ?? { preset: "all", startMs: null, endMs: null }).hours)} 净增量` : "累计总量"}</span></div><div className="compare-chart-controls"><div className="compare-chart-selectors"><MetricSelector value={metric} onChange={setMetric} label="比较指标" metrics={COMPARE_CHART_METRICS} /><div className="compare-mode-selector" role="group" aria-label="数值口径"><button type="button" className={cn(valueMode === "total" && "active")} aria-pressed={valueMode === "total"} onClick={() => setValueMode("total")}>总量</button><button type="button" className={cn(valueMode === "delta" && "active")} aria-pressed={valueMode === "delta"} onClick={() => setValueMode("delta")}>增量</button></div></div><ChartRangeControl value={rangeValue} onChange={setRangeValue} /></div><div className="chart-wrap"><CompareChart series={series} metric={metric} valueMode={valueMode} range={range ?? { preset: "all", startMs: null, endMs: null }} /></div><div className="compare-legend">{series.map((item) => <button type="button" key={item.analysis.work.key} className="legend-item" onClick={() => onOpenWork(item.analysis.work.key)}><span className="legend-dot" style={{ backgroundColor: item.color }} />{item.analysis.work.title}<ChevronRight size={14} aria-hidden="true" /></button>)}</div>{valueMode === "delta" && <p className="chart-footnote"><Info size={14} aria-hidden="true" />分段净增量 · 无观察时段留空</p>}{series.some((item) => item.points.length < 2) && <p className="chart-footnote"><Info size={14} aria-hidden="true" />所选范围内不足两次有效{DASHBOARD_CHART_METRIC_LABELS[metric]}观察的作品不会被绘制。</p>}</section>}
     </div>
   );
 }

@@ -68,13 +68,13 @@ PixivPulse 把每轮只读观察保存为本地时间序列，并让总览、作
 
 ## 安装
 
-当前稳定版是 **v0.4.16**，要求 **Chrome 120 或更高版本**。项目尚未上架 Chrome Web Store，需要以已解压扩展方式安装。
+当前稳定版是 **v0.4.19**，要求 **Chrome 120 或更高版本**。项目尚未上架 Chrome Web Store，需要以已解压扩展方式安装。
 
-1. 从 [GitHub Releases](https://github.com/Zenith-Angle/PixivPulse/releases/latest) 下载 `pixiv-pulse-v0.4.16-chrome.zip` 和 `SHA256SUMS.txt`。
+1. 从 [GitHub Releases](https://github.com/Zenith-Angle/PixivPulse/releases/latest) 下载 `pixiv-pulse-v0.4.19-chrome.zip` 和 `SHA256SUMS.txt`。
 2. 可选但推荐：核对 ZIP 的 SHA-256。
 
    ```powershell
-   Get-FileHash .\pixiv-pulse-v0.4.16-chrome.zip -Algorithm SHA256
+   Get-FileHash .\pixiv-pulse-v0.4.19-chrome.zip -Algorithm SHA256
    ```
 
 3. 将 ZIP 完整解压到一个不会被清理的目录。
