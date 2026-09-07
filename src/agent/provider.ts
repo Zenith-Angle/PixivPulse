@@ -71,19 +71,43 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
         ...(tools.length ? { tools: tools.map((tool) => ({ type: "function" as const, ...tool, strict: true })), tool_choice: "auto" as const } : {}),
       }, { signal: abort.signal });
       let final: TurnResult | null = null;
+      // Some compatible servers send text only in done/item events. Reconcile each
+      // block independently so a missing delta neither delays text nor drops it.
+      const blocks = new Map<string, string>();
+      const receive = (output: number, content: number, value: string, delta = false) => {
+        const key = `${output}:${content}`, previous = blocks.get(key) ?? "";
+        const next = delta ? previous + value : value;
+        if (!next.startsWith(previous)) throw new AgentError("模型流式文本前后不一致，已保留收到的内容。");
+        blocks.set(key, next);
+        const suffix = next.slice(previous.length);
+        if (suffix) addText(suffix);
+      };
+      const receiveItem = (item: { type: string; content?: unknown }, index: number) => {
+        if (item.type !== "message" || !Array.isArray(item.content)) return;
+        item.content.forEach((part: { type: string; text?: string; refusal?: string }, content) => {
+          if (part.type === "output_text" && typeof part.text === "string") receive(index, content, part.text);
+          if (part.type === "refusal" && typeof part.refusal === "string") receive(index, content, part.refusal);
+        });
+      };
       progress("模型已连接，等待内容");
       for await (const event of stream) {
         if (event.type.startsWith("response.reasoning")) progress("模型正在处理问题");
         if (event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") progress("模型正在准备工具调用");
         if (event.type === "response.output_item.added" && event.item.type === "function_call") progress("模型正在准备工具调用");
-        if (event.type === "response.output_text.delta") addText(event.delta);
-        if (event.type === "response.refusal.delta") addText(event.delta);
+        if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") receive(event.output_index ?? 0, event.content_index ?? 0, event.delta, true);
+        if (event.type === "response.output_text.done") receive(event.output_index ?? 0, event.content_index ?? 0, event.text);
+        if (event.type === "response.refusal.done") receive(event.output_index ?? 0, event.content_index ?? 0, event.refusal);
+        if (event.type === "response.content_part.done") {
+          if (event.part.type === "output_text") receive(event.output_index ?? 0, event.content_index ?? 0, event.part.text);
+          if (event.part.type === "refusal") receive(event.output_index ?? 0, event.content_index ?? 0, event.part.refusal);
+        }
+        if (event.type === "response.output_item.done") receiveItem(event.item, event.output_index);
         if (event.type === "response.failed" || event.type === "error") throw new AgentError("模型返回生成失败，请重试或更换模型。");
         if (event.type === "response.incomplete") throw new AgentError("回答未完成（输出上限或服务限制），请提高最大输出或缩小问题范围。");
         if (event.type === "response.completed") {
           const response = event.response;
           if (response.status !== "completed") throw new AgentError("模型响应未完成。");
-          if (!text) for (const item of response.output) if (item.type === "message") for (const part of item.content) if (part.type === "output_text") addText(part.text);
+          response.output.forEach(receiveItem);
           final = { text, calls: response.output.flatMap((item) => item.type === "function_call" ? [{ id: item.call_id, name: item.name, arguments: item.arguments }] : []),
             output: response.output.map((item): ResponseInputItem => {
               if (item.type === "message" || item.type === "function_call" || item.type === "reasoning") return item;

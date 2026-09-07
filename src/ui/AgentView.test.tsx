@@ -84,6 +84,32 @@ describe("Agent workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
     await screen.findByText("生成已停止，可重试。");
   });
+  it("separates tool commentary, auto-folds for the answer and restores expandable history", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
+    let hooks!: runner.RunHooks, finish!: () => void;
+    vi.spyOn(runner, "runAgent").mockImplementation(async (_c, _m, _d, _p, _s, value) => { hooks = value; hooks.onProgress?.("读取正文：《示例章节》"); await new Promise<void>(resolve => { finish = resolve; }); });
+    const view = render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "比较正文" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByRole("button", { name: "收起执行过程" });
+    await waitFor(() => expect(hooks).toBeDefined());
+    hooks.onText("先核对样本范围。"); hooks.onToolTurn?.("先核对样本范围。");
+    await waitFor(() => expect(document.querySelector(".assistant .agent-markdown")?.textContent).toBe(""));
+    expect(await screen.findByText("先核对样本范围。")).toBeVisible();
+    hooks.onProgress?.("结合已获取的证据组织回答"); hooks.onText("保留角色行动的细节。");
+    await screen.findByRole("button", { name: "展开执行过程" });
+    expect(screen.getByText("先核对样本范围。")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "展开执行过程" }));
+    expect(screen.getByText("先核对样本范围。")).toBeVisible();
+    finish(); await screen.findByRole("button", { name: "重新生成" });
+    await screen.findByRole("button", { name: "展开执行过程" });
+    const saved = (await listConversations("preview"))[0]!.messages.at(-1)!;
+    expect(saved.content).toBe("保留角色行动的细节。");
+    expect(saved.progress).toContainEqual(expect.objectContaining({ detail: "先核对样本范围。" }));
+    view.unmount(); render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "展开执行过程" }));
+    expect(screen.getByText("先核对样本范围。")).toBeVisible();
+  });
   it("leaves settings when creating a conversation", async () => {
     render(<AgentView data={createDemoData()} isPreview />);
     fireEvent.click(await screen.findByRole("button", { name: "连接配置" }));

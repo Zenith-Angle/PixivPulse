@@ -52,7 +52,8 @@ export interface AgentMessage {
   model?: string;
   usage?: AgentUsage;
   trimmedTurns?: number;
-  progress?: { label: string; at: string }[];
+  progress?: { label: string; at: string; detail?: string }[];
+  phase?: "working" | "answering";
 }
 
 export interface Conversation {

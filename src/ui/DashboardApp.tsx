@@ -485,7 +485,7 @@ function Sidebar({ activeTab, onChange, onOpenOnboarding }: { activeTab: Dashboa
       <div className="sidebar-bottom">
         <div className="local-badge"><span className="status-dot" />数据保存在本机</div>
         <button type="button" className="help-link" onClick={onOpenOnboarding} title="重新查看首次使用说明"><Info size={15} aria-hidden="true" />使用说明</button>
-        <p className="version-label">PixivPulse 0.5.8 · 本地优先</p>
+        <p className="version-label">PixivPulse 0.5.9 · 本地优先</p>
       </div>
     </aside>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Bot, ChevronUp, ChevronDown, Check, Copy, Pencil, Quote, RotateCcw, Download, MessageSquare, Plus, Send, Settings2, Square, Trash2, X } from "lucide-react";
@@ -10,19 +10,39 @@ import { clearAgentMemory } from "../agent/storage";
 import { runAgent } from "../agent/runner";
 import { conversationMarkdown, deleteConversation, listConversations, loadAgentConfig, saveAgentConfig, saveConversation } from "../agent/storage";
 import { DEFAULT_AGENT_CONFIG, type AgentConfig, type AgentMessage, type Conversation } from "../agent/types";
+import { createTextStream } from "./agent-text-stream";
 import { triggerDownload } from "./helpers";
 
 
 
+const AgentMarkdown = memo(function AgentMarkdown({ content }: { content: string }) {
+  return <div className="agent-markdown"><Markdown remarkPlugins={[remarkGfm]} skipHtml components={{ img: () => null, a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> }}>{content}</Markdown></div>;
+});
+
 function RunProgress({ message }: { message: AgentMessage }) {
+  const running = message.status === "running";
+  const autoOpen = running && message.phase !== "answering";
+  const [open, setOpen] = useState(autoOpen);
   const [now, setNow] = useState(Date.now());
-  useEffect(() => { if (message.status !== "running") return; const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer); }, [message.status]);
+  const listRef = useRef<HTMLOListElement>(null);
+  const follow = useRef(true);
+  useEffect(() => setOpen(autoOpen), [autoOpen, message.status]);
+  useEffect(() => { if (!running) return; const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer); }, [running]);
   const rows = message.progress ?? [];
-  if (!rows.length && message.status !== "running") return null;
-  return <div className="agent-progress">
-    {message.status === "running" && <p role="status"><span className="agent-progress-dot" />{rows.at(-1)?.label ?? "正在启动"} · 已用时 {Math.max(0, Math.floor((now - Date.parse(message.at)) / 1000))} 秒</p>}
-    {!!rows.length && <details><summary>查看执行过程（{rows.length}）</summary><ol>{rows.map((row, index) => <li key={index}><time>{new Date(row.at).toLocaleTimeString()}</time> {row.label}</li>)}</ol></details>}
-  </div>;
+  useEffect(() => { const list = listRef.current; if (list && open && follow.current) list.scrollTop = list.scrollHeight; }, [rows.length, open]);
+  if (!rows.length && !running) return null;
+  const label = running ? rows.at(-1)?.label ?? "正在启动" : message.status === "complete" ? "执行完成" : message.status === "stopped" ? "执行已停止" : "执行遇到问题";
+  return <section className="agent-progress" aria-label="Agent 执行过程">
+    <div className="agent-progress-header">
+      <span className={`agent-progress-dot ${running ? "running" : ""}`} />
+      <span className="agent-progress-label" role={running ? "status" : undefined}>{label}{running && ` · 已用时 ${Math.max(0, Math.floor((now - Date.parse(message.at)) / 1000))} 秒`}</span>
+      <small>{rows.length} 条记录</small>
+      <button type="button" className="agent-process-toggle" aria-label={open ? "收起执行过程" : "展开执行过程"} title={open ? "收起执行过程" : "展开执行过程"} aria-expanded={open} aria-controls={`process-${message.id}`} onClick={() => setOpen(value => !value)}>{open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
+    </div>
+    <ol id={`process-${message.id}`} hidden={!open} ref={listRef} onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
+      {rows.map((row, index) => <li key={index} className={running && index === rows.length - 1 ? "current" : ""}><time>{new Date(row.at).toLocaleTimeString()}</time><div><span>{row.label}</span>{row.detail && <p className="agent-process-note">{row.detail}</p>}</div></li>)}
+    </ol>
+  </section>;
 }
 
 function MessageActions({ message, onEdit, onQuote, onRetry, onExport, onError }: {
@@ -161,7 +181,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
   useEffect(() => {
     const container = messagesRef.current;
     if (active && container && followOutput.current) container.scrollTop = container.scrollHeight;
-  }, [active, ready, settings, selectedId, current?.messages.at(-1)?.content, current?.messages.at(-1)?.traces.length]);
+  }, [active, ready, settings, selectedId, current?.messages.at(-1)?.content, current?.messages.at(-1)?.traces.length, current?.messages.at(-1)?.progress?.length, current?.messages.at(-1)?.phase]);
   useEffect(() => {
     if (!runningIds.length) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
@@ -169,8 +189,9 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
     return () => window.removeEventListener("beforeunload", warn);
   }, [runningIds.length]);
 
-  function display(conversation: Conversation) {
+  function display(conversation: Conversation, streamedText?: string) {
     const copy = structuredClone(conversation);
+    if (streamedText !== undefined) copy.messages.at(-1)!.content = streamedText;
     setConversations((rows) => [copy, ...rows.filter((row) => row.id !== copy.id)]);
   }
 
@@ -199,7 +220,9 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
     setRunningIds([...controllers.current.keys()]);
     if (!retryMessageId) setQuestion("");
     setSelectedId(conversation.id); setSettings(false); display(conversation);
-    let paintTimer: ReturnType<typeof setTimeout> | undefined;
+    let visibleContent = "";
+    const paint = () => display(conversation, visibleContent);
+    const stream = createTextStream(text => { visibleContent = text; paint(); }, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
     let saveQueue = Promise.resolve();
     let saveFailed = false;
     const persist = () => {
@@ -215,21 +238,30 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
       await persist();
       if (saveFailed) throw new Error("storage-failed");
       display(conversation);
-      let lastPaint = 0;
       let lastSave = Date.now();
       try {
         await runAgent(checked, conversation.messages.slice(0, -1), data, isPreview, abort.signal, {
-          onText: (chunk) => { assistant.content += chunk; const now = Date.now(); if (now - lastPaint > 40) { clearTimeout(paintTimer); paintTimer = undefined; display(conversation); lastPaint = now; } else if (!paintTimer) { paintTimer = setTimeout(() => { paintTimer = undefined; display(conversation); lastPaint = Date.now(); }, 40); } if (now - lastSave > 1500) { void persist(); lastSave = now; } },
-          onProgress: (label) => { const rows = assistant.progress ??= []; if (rows.at(-1)?.label === label) return; rows.push({ label, at: new Date().toISOString() }); if (rows.length > 80) rows.shift(); display(conversation); },
-          onTrace: async (trace) => { assistant.traces.push(trace); display(conversation); await persist(); },
+          onText: (chunk) => {
+            assistant.content += chunk; assistant.phase = "answering"; stream.push(chunk);
+            if (Date.now() - lastSave > 1500) { void persist(); lastSave = Date.now(); }
+          },
+          onToolTurn: (text) => {
+            assistant.phase = "working"; assistant.content = "";
+            if (text.trim()) { const rows = assistant.progress ??= []; rows.push({ label: "模型执行说明", detail: text.slice(0, 6000), at: new Date().toISOString() }); if (rows.length > 80) rows.shift(); }
+            stream.reset(); void persist();
+          },
+          onProgress: (label) => { const rows = assistant.progress ??= []; if (rows.at(-1)?.label === label) return; rows.push({ label, at: new Date().toISOString() }); if (rows.length > 80) rows.shift(); paint(); },
+          onTrace: async (trace) => { assistant.traces.push(trace); paint(); await persist(); },
           onBudget: (trimmed) => { assistant.trimmedTurns = trimmed; },
           onUsage: (usage) => { assistant.usage = usage; },
         });
+        await stream.drain();
+        abort.signal.throwIfAborted();
         assistant.status = "complete";
       } catch (e) {
         assistant.status = abort.signal.aborted ? "stopped" : "error";
         assistant.error = abort.signal.aborted ? "生成已停止，可重试。" : safeAgentError(e);
-      } finally { await persist(); display(conversation); }
+      } finally { stream.flush(); await persist(); display(conversation); }
     };
     try {
       if (navigator.locks) await navigator.locks.request(`pixivpulse-agent:${conversation.id}`, { ifAvailable: true }, async (lock) => { if (!lock) throw new Error("conversation-locked"); await run(); });
@@ -238,7 +270,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
       assistant.status = "error"; assistant.error = "对话未能启动，请查看上方提示。"; display(conversation);
       setError((e as Error).message === "stale-conversation" ? "此对话已在另一标签页更新，请刷新后再继续。" : (e as Error).message === "conversation-locked" ? "此对话正在另一标签页生成，请等待完成后刷新。" : "无法启动对话，请检查本地存储后重试。");
     } finally {
-      clearTimeout(paintTimer);
+      stream.dispose();
       if (saveFailed) setError("对话保存失败，生成已停止。请立即导出当前对话，并检查本地存储空间。");
       controllers.current.delete(conversation.id); setRunningIds([...controllers.current.keys()]);
     }
@@ -266,8 +298,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
         <div className="agent-data-banner"><span className={`status-dot ${config.shareData ? "agent-connected" : ""}`} />{config.shareData ? `${isPreview ? "演示数据" : "本地知识"} · ${data.works.length} 件作品 · ${data.samples.length} 条历史样本` : "普通对话 · 本地数据分享未开启"}<span>{config.shareData ? `提问时按需发送 · 原文采样${config.sampleOriginals && !isPreview ? "已开启" : "未开启"}` : "在连接配置中开启数据分析"}</span></div>
         <div className="agent-messages" ref={messagesRef} onScroll={(event) => { const element = event.currentTarget; followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }} role="log" aria-label="聊天消息" aria-live="off">
           {!current?.messages.length && <div className="agent-welcome"><div className="agent-orb"><Bot size={32} /></div><p className="eyebrow">ASK YOUR DATA</p><h2>从一个问题开始，<br />读懂作品背后的变化。</h2><p>把真实采样变成有依据的分析。Agent 可以检索作品、比较增长、查看粉丝趋势，并展示查询来源。</p><div className="agent-preset-row" aria-label="问题分类">{Object.keys(promptGroups).map(category => <button type="button" key={category} aria-pressed={promptCategory === category} onClick={() => setPromptCategory(category)}>{category}</button>)}</div><div className="agent-suggestions">{prompts.map((prompt) => <button type="button" key={prompt} onClick={() => setQuestion(prompt)}>{prompt}<Send size={14} /></button>)}</div></div>}
-          {current?.messages.map((message) => <article key={message.id} className={`agent-message ${message.role}`}><div className="agent-message-meta"><strong>{message.role === "user" ? "你" : "Agent"}</strong><span>{message.model}</span>{message.status === "running" && <span role="status">正在分析…</span>}</div><div className="agent-markdown"><Markdown remarkPlugins={[remarkGfm]} skipHtml components={{ img: () => null, a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> }}>{message.content}</Markdown></div>
-            <RunProgress message={message} />
+          {current?.messages.map((message) => <article key={message.id} className={`agent-message ${message.role}`}><div className="agent-message-meta"><strong>{message.role === "user" ? "你" : "Agent"}</strong><span>{message.model}</span>{message.status === "running" && <span role="status">正在分析…</span>}</div><RunProgress message={message} /><AgentMarkdown content={message.content} />
             {message.traces.length > 0 && <details className="agent-sources"><summary>已查询 {message.traces.length} 个来源</summary>{message.traces.map((trace) => <details key={trace.id}><summary>[{trace.id}] {trace.name}{trace.cached ? " · 记忆复用" : ""}</summary><small>{trace.at}</small><pre>{trace.arguments}</pre><pre>{trace.result}</pre></details>)}</details>}
             {!!message.trimmedTurns && <p className="agent-muted">本轮已省略较早的 {message.trimmedTurns} 轮上下文；历史记录仍保留。</p>}
             {message.usage && (message.usage.input > 0 || message.usage.output > 0) && <p className="agent-muted">本轮累计 tokens：输入 {message.usage.input.toLocaleString()} · 输出 {message.usage.output.toLocaleString()}{message.usage.requests !== undefined && <> · {message.usage.requests} 次请求 · 记忆命中 {message.usage.memoryHits ?? 0} 次 · 服务商缓存输入 {message.usage.cachedInput ?? 0}{message.usage.evidenceBytes && <> · 工具证据：正文 {(message.usage.evidenceBytes.content / 1024).toFixed(1)} KB / 统计 {(message.usage.evidenceBytes.statistics / 1024).toFixed(1)} KB（非 token）</>}</>}</p>}

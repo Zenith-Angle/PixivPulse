@@ -290,6 +290,8 @@ describe("PixivPulse dashboard", () => {
     const data = createDemoData();
     const props = { analyses: analyzeDashboard(data), data, onOpenWork: vi.fn(), onGoToWorks: vi.fn() };
     const { rerender } = render(<OverviewView {...props} animationSignal={0} />);
+    // Midnight may have no observations today; exercise replay with an explicit rolling range.
+    fireEvent.click(screen.getByRole("button", { name: "近24小时" }));
     expect(document.querySelectorAll(".overview-view .animated-number-rolling")).toHaveLength(0);
 
     rerender(<OverviewView {...props} animationSignal={1} />);

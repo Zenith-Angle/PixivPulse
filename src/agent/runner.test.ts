@@ -31,6 +31,33 @@ describe("Agent protocol and execution acceptance", () => {
     expect((await running).text).toBe("第一段第二段");
     expect(onProgress).toHaveBeenCalledWith("正在输出回答");
   });
+  it("delivers done-only text before completion and reconciles partially streamed blocks without duplicates", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ start(value) { controller = value; } }), { headers: { "content-type": "text/event-stream" } })));
+    const onText = vi.fn();
+    const running = generateTurn(config, "test", [], [user], [], new AbortController().signal, onText);
+    const emit = (event: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+    emit({ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "前" });
+    emit({ type: "response.output_text.done", output_index: 0, content_index: 0, text: "前段" });
+    await vi.waitFor(() => expect(onText.mock.calls.flat().join("")).toBe("前段"));
+    emit({ type: "response.output_item.done", output_index: 1, item: { ...message("后段"), id: "m2" } });
+    await vi.waitFor(() => expect(onText.mock.calls.flat().join("")).toBe("前段后段"));
+    emit(response([message("前段"), { ...message("后段"), id: "m2" }])); controller.close();
+    expect((await running).text).toBe("前段后段");
+    expect(onText.mock.calls.flat().join("")).toBe("前段后段");
+  });
+  it("reports each sampled title and separates a tool preamble from the final answer", async () => {
+    const data = createDemoData(), work = data.works.find(row => row.type === "novel")!;
+    data.works = [{ ...work, key: "a", title: "样本甲" }, { ...work, key: "b", title: "样本乙" }];
+    vi.spyOn(novel, "readNovelSample").mockImplementation(async (_data, args) => ({ cached: args.workKey === "b", result: { sampledCharacters: 500, totalCharacters: 1000 } }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(sse([response([message("先读取两个样本。"), { type: "function_call", id: "f", call_id: "c", name: "read_content_samples", arguments: JSON.stringify({ workKeys: ["a", "b"], refresh: false }) }])])).mockResolvedValueOnce(sse([response([message("建议与不确定性 [S1]")])])));
+    let answer = ""; const preambles: string[] = []; const stages: string[] = [];
+    await runAgent({ ...config, sampleOriginals: true }, [{ ...user, content: "根据 2–3 篇正文采样分析特点与新方向，不将少量样本当全库结论" }], data, false, new AbortController().signal, { ...hooks(), onText: text => { answer += text; }, onToolTurn: text => { preambles.push(text); answer = ""; }, onProgress: stage => stages.push(stage) });
+    expect(answer).toBe("建议与不确定性 [S1]"); expect(preambles).toEqual(["先读取两个样本。"]);
+    expect(stages).toContain("读取正文：《样本甲》"); expect(stages).toContain("读取正文：《样本乙》");
+    expect(stages.some(stage => stage.startsWith("复用正文片段：《样本乙》"))).toBe(true);
+    expect(stages).toContain("结合已获取的证据组织回答");
+  });
   it("closes tools after an original-reading failure instead of retrying another channel", async () => {
     const data = createDemoData(), work = data.works.find(work => work.type === "novel")!;
     const read = vi.spyOn(novel, "readNovelSample").mockRejectedValue(new Error("页面要求验证"));
