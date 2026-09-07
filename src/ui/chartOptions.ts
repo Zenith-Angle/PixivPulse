@@ -76,8 +76,8 @@ const baseTextStyle = {
 };
 
 const lineDensityOptions = (pointCount: number) => ({
-  smooth: true,
-  smoothMonotone: "x" as const,
+  // Follow neighbouring slopes; monotone-x flattens every observation into a step.
+  smooth: 0.35,
   showSymbol: pointCount <= 12,
   symbol: "circle" as const,
   symbolSize: 7,
@@ -187,7 +187,7 @@ export const buildPortfolioChartOption = ({
       trigger: "axis",
       axisPointer: {
         type: "line",
-        label: { formatter: (params: { value: string | number }) => formatAxisTime(params.value) },
+        label: { formatter: (params: { value: string | number }) => `${formatAxisTime(params.value)} · 采样值` },
       },
       valueFormatter: (value: unknown) => formatAxisNumber(Number(value)),
     },
@@ -209,6 +209,7 @@ export const buildPortfolioChartOption = ({
       splitLine: { lineStyle: { color: "#dbe3e7", type: "dashed" } },
     },
     series: [{
+      id: "portfolio",
       name: label,
       type: "line",
       data: validPoints,
@@ -245,7 +246,7 @@ export const buildFollowerChartOption = ({
       trigger: "axis",
       axisPointer: {
         type: "line",
-        label: { formatter: (params: { value: string | number }) => formatAxisTime(params.value) },
+        label: { formatter: (params: { value: string | number }) => `${formatAxisTime(params.value)} · 采样值` },
       },
       valueFormatter: (value: unknown) => formatAxisNumber(Number(value)),
     },
@@ -273,17 +274,14 @@ export const buildFollowerChartOption = ({
       splitLine: { lineStyle: { color: "#dbe3e7", type: "dashed" } },
     },
     series: [{
+      id: "followers",
       name: "粉丝数",
       type: "line",
       data: validPoints,
       dimensions: [{ name: "时间", type: "time" }, { name: "粉丝数", type: "float" }, { name: "同步", type: "ordinal" }, { name: "顺序", type: "int" }],
       encode: { x: 0, y: 1, tooltip: 1 },
-      smooth: 0.3,
-      smoothMonotone: "x",
+      ...lineDensityOptions(validPoints.length),
       sampling: validPoints.length > 24 ? "lttb" : undefined,
-      showSymbol: validPoints.length <= 12,
-      symbol: "circle",
-      symbolSize: 7,
       lineStyle: { color, width: 3 },
       itemStyle: { color, borderColor: "#ffffff", borderWidth: 2 },
       areaStyle: { color, opacity: 0.12 },
@@ -312,7 +310,8 @@ export const buildCompareChartOption = (series: ChartSeriesInput[]): EChartsCore
     },
     tooltip: {
       trigger: "axis",
-      axisPointer: { type: "line" },
+      axisPointer: { type: "line", label: { formatter: (params: { value: number }) => `${formatRelativeValue(params.value, axisUnit)} · 采样值` } },
+      order: "valueDesc",
       valueFormatter: (value: unknown) => `${Number(value).toFixed(1)}%`,
     },
     xAxis: {
@@ -334,6 +333,7 @@ export const buildCompareChartOption = (series: ChartSeriesInput[]): EChartsCore
       splitLine: { lineStyle: { color: "#dbe3e7", type: "dashed" } },
     },
     series: normalized.map((item) => ({
+      id: `relative:${item.key}`,
       name: item.name,
       type: "line",
       data: item.points.map((point, index) => [point.x * xMultiplier, point.y, point.runId ?? "", point.sequence ?? index]),
@@ -389,9 +389,10 @@ export const buildAbsoluteCompareChartOption = ({
       trigger: "axis",
       axisPointer: {
         type: "line",
-        label: { formatter: (params: { value: string | number }) => formatAxisTime(params.value) },
+        label: { formatter: (params: { value: string | number }) => `${formatAxisTime(params.value)} · 采样值` },
       },
       valueFormatter: formatValue,
+      order: "valueDesc",
     },
     xAxis: {
       type: "time",
@@ -415,6 +416,7 @@ export const buildAbsoluteCompareChartOption = ({
       splitLine: { lineStyle: { color: "#dbe3e7", type: "dashed" } },
     },
     series: normalized.map((item) => ({
+      id: `absolute:${item.key}`,
       name: item.name,
       type: "line",
       data: item.points,
@@ -451,7 +453,7 @@ export const buildGrowthChartOption = ({
       trigger: "axis",
       axisPointer: {
         type: "line",
-        label: { formatter: (params: { value: string | number }) => formatAxisTime(params.value) },
+        label: { formatter: (params: { value: string | number }) => `${formatAxisTime(params.value)} · 采样值` },
       },
       valueFormatter: (value: unknown) => formatAxisNumber(Number(value)),
     },
@@ -473,6 +475,7 @@ export const buildGrowthChartOption = ({
       splitLine: { lineStyle: { color: "#dbe3e7", type: "dashed" } },
     },
     series: [{
+      id: "growth",
       name: `${label}总数`,
       type: "line",
       data: normalized,

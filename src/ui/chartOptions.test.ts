@@ -1,7 +1,84 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { init, use, setPlatformAPI } from "echarts/core";
+import env from "zrender/lib/core/env.js";
+import { LineChart } from "echarts/charts";
+import { GridComponent, TooltipComponent, DataZoomComponent, LegendComponent } from "echarts/components";
+import { SVGRenderer } from "echarts/renderers";
 import { buildAbsoluteCompareChartOption, buildCompareChartOption, buildFollowerChartOption, buildGrowthChartOption, buildPortfolioChartOption } from "./chartOptions";
+import { buildTrendSeries } from "./chartTrend";
 
 const optionRecord = (option: unknown): Record<string, any> => option as Record<string, any>;
+
+use([LineChart, GridComponent, TooltipComponent, DataZoomComponent, LegendComponent, SVGRenderer]);
+
+describe("rendered chart behaviour", () => {
+  const wasNode = env.node;
+  beforeAll(() => {
+    // Enable DOM tooltips in jsdom; SVG tests need only deterministic text widths.
+    env.node = false;
+    setPlatformAPI({ measureText: (text) => ({ width: text.length * 7 }) });
+  });
+  afterAll(() => { env.node = wasNode; });
+  it("follows the slope through sparse observations without leaving segment bounds", () => {
+    const chart = init(null, undefined, { renderer: "svg", ssr: true, width: 800, height: 300 });
+    try {
+      chart.setOption({ ...buildGrowthChartOption({ metric: "views", points: [
+        { at: "2026-09-01T00:00:00Z", value: 10 },
+        { at: "2026-09-01T01:00:00Z", value: 30 },
+        { at: "2026-09-01T08:00:00Z", value: 60 },
+        { at: "2026-09-02T00:00:00Z", value: 60 },
+        { at: "2026-09-02T01:00:00Z", value: 40 },
+      ] }), animation: false });
+      chart.renderToSVGString();
+      const line = optionRecord(chart.getZr().storage.getDisplayList().find((item) => item.type === "ec-polyline"));
+      const curves: number[][] = [];
+      let previous: number[] = [];
+      line.buildPath({
+        moveTo: (x: number, y: number) => { previous = [x, y]; },
+        bezierCurveTo: (...values: number[]) => {
+          const [cx1, cy1, cx2, cy2, x, y] = values;
+          for (const [value, start, end] of [[cx1, previous[0], x], [cx2, previous[0], x], [cy1, previous[1], y], [cy2, previous[1], y]]) {
+            expect(value).toBeGreaterThanOrEqual(Math.min(start!, end!) - 0.001);
+            expect(value).toBeLessThanOrEqual(Math.max(start!, end!) + 0.001);
+          }
+          curves.push(values);
+          previous = [x!, y!];
+        },
+      }, line.shape);
+      expect(curves).toHaveLength(4);
+      expect(curves[0]![3]).not.toBe(curves[0]![5]);
+    } finally {
+      chart.dispose();
+    }
+  });
+
+  it.each(["total", "delta"] as const)("orders the actual %s tooltip at each observation", async (valueMode) => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const chart = init(host, undefined, { renderer: "svg", width: 800, height: 300 });
+    try {
+      const source = buildAbsoluteCompareChartOption({ metric: "views", valueMode, series: [
+        { key: "a", name: "Alpha", color: "red", points: [10, 20, 50, 60].map((value, i) => ({ at: `2026-09-0${i + 1}T00:00:00Z`, value })) },
+        { key: "b", name: "Beta", color: "green", points: [10, 40, 30, 40].map((value, i) => ({ at: `2026-09-0${i + 1}T00:00:00Z`, value })) },
+      ] });
+      chart.setOption({ ...source, series: buildTrendSeries(source), animation: false });
+      for (const [dataIndex, higher, lower] of [[1, "Beta", "Alpha"], [2, "Alpha", "Beta"]] as const) {
+        chart.dispatchAction({ type: "showTip", seriesIndex: 0, dataIndex });
+        await vi.waitFor(() => {
+          const tooltip = host.textContent ?? "";
+          expect(tooltip).toContain(higher);
+          expect(tooltip).toContain("采样值");
+          expect(tooltip.match(/Alpha/g)).toHaveLength(1);
+          expect(tooltip.match(/Beta/g)).toHaveLength(1);
+          expect(tooltip.indexOf(higher), `point ${dataIndex}: ${tooltip}`).toBeLessThan(tooltip.indexOf(lower));
+        });
+      }
+    } finally {
+      chart.dispose();
+      host.remove();
+    }
+  });
+});
 
 describe("dashboard ECharts option builders", () => {
   it("builds the account follower history on a real time axis with density controls", () => {
@@ -16,7 +93,7 @@ describe("dashboard ECharts option builders", () => {
     expect(option.xAxis.type).toBe("time");
     expect(option.yAxis.name).toBe("粉丝数");
     expect(option.series[0].name).toBe("粉丝数");
-    expect(option.series[0].smooth).toBeCloseTo(0.3);
+    expect(option.series[0].smooth).toBeCloseTo(0.35);
     expect(option.series[0].sampling).toBe("lttb");
     expect(option.series[0].showSymbol).toBe(false);
     expect(option.series[0].data).toHaveLength(40);
@@ -55,8 +132,8 @@ describe("dashboard ECharts option builders", () => {
     expect(option.animation).toBe(true);
     expect(option.animationDurationUpdate).toBe(0);
     expect(option.series[0].name).toBe("评论");
-    expect(option.series[0].smooth).toBe(true);
-    expect(option.series[0].smoothMonotone).toBe("x");
+    expect(option.series[0].smooth).toBe(0.35);
+    expect(option.series[0].smoothMonotone).toBeUndefined();
     expect(option.series[0].step).toBeUndefined();
     expect(option.series[0].areaStyle).toBeTruthy();
     expect(option.series[0].data).toEqual([
@@ -83,7 +160,7 @@ describe("dashboard ECharts option builders", () => {
       [Date.parse("2026-08-30T06:00:00.000Z"), 20, "c", 2],
     ]);
     expect(option.series[0].sampling).toBeUndefined();
-    expect(option.series[0].smooth).toBe(true);
+    expect(option.series[0].smooth).toBe(0.35);
     expect(option.series[0].step).toBeUndefined();
     expect(option.series[0].encode).toEqual({ x: 0, y: 1, tooltip: 1 });
     expect(option.xAxis.axisLabel.formatter(Date.parse("2026-08-30T06:00:00.000Z"))).not.toMatch(/NaN|—/);
@@ -102,7 +179,8 @@ describe("dashboard ECharts option builders", () => {
     ] }));
 
     for (const option of [portfolio, comparison, detail]) {
-      expect(option.series[0].smooth).toBe(true);
+      expect(option.series[0].smooth).toBe(0.35);
+      expect(option.series[0].smoothMonotone).toBeUndefined();
       expect(option.series[0].step).toBeUndefined();
       expect(option.series[0].sampling).toBeUndefined();
       expect(option.animation).toBe(true);
@@ -132,6 +210,7 @@ describe("dashboard ECharts option builders", () => {
       { key: "b", name: "乙", color: "#ff6b5e", points: [{ x: 0, y: 0 }, { x: 1, y: -4 }] },
     ]));
     expect(option.tooltip.trigger).toBe("axis");
+    expect(option.tooltip.order).toBe("valueDesc");
     expect(option.series).toHaveLength(2);
     expect(option.xAxis.type).toBe("value");
     expect(option.series[0].sampling).toBeUndefined();
@@ -166,7 +245,8 @@ describe("dashboard ECharts option builders", () => {
       [Date.parse("2026-08-31T04:00:00.000Z"), 95, "b-2", 1],
     ]);
     expect(option.tooltip.valueFormatter(1_300)).toBe("1,300");
-    expect(option.series[0].smooth).toBe(true);
+    expect(option.series[0].smooth).toBe(0.35);
+    expect(option.tooltip.order).toBe("valueDesc");
     expect(option.series[0].sampling).toBeUndefined();
   });
 
@@ -193,6 +273,7 @@ describe("dashboard ECharts option builders", () => {
     expect(option.series[1].data.map((point: unknown[]) => point[1])).toEqual([0, -20]);
     expect(option.tooltip.valueFormatter(30)).toBe("+30");
     expect(option.tooltip.valueFormatter(-20)).toBe("-20");
+    expect(option.tooltip.order).toBe("valueDesc");
     expect(option.yAxis.min({ min: -20 })).toBe(-20);
     expect(option.yAxis.min({ min: 5 })).toBe(0);
   });

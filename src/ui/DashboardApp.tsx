@@ -469,7 +469,7 @@ function Sidebar({ activeTab, onChange, onOpenOnboarding }: { activeTab: Dashboa
       <div className="sidebar-bottom">
         <div className="local-badge"><span className="status-dot" />数据保存在本机</div>
         <button type="button" className="help-link" onClick={onOpenOnboarding} title="重新查看首次使用说明"><Info size={15} aria-hidden="true" />使用说明</button>
-        <p className="version-label">PixivPulse 0.4.16 · 本地优先</p>
+        <p className="version-label">PixivPulse 0.4.18 · 本地优先</p>
       </div>
     </aside>
   );
@@ -773,7 +773,7 @@ function FollowerGrowthSection({ data, rangeValue, onRangeChange, pending, anima
       <button type="button" className="follower-preview-button" onClick={() => setExpanded(true)} aria-label="打开粉丝增长详细图表">
         <span className="follower-preview-chart" aria-hidden="true">
           {previewPoints.length >= 2
-            ? <EChartsHost option={previewOption} hasData ariaLabel="" summary="" height={72} className="follower-mini-chart" />
+            ? <EChartsHost option={previewOption} hasData compact ariaLabel="" summary="" height={72} className="follower-mini-chart" />
             : <span className="follower-preview-empty">{previewPoints.length === 1 ? "基线已建立" : "等待首次采样"}</span>}
         </span>
         <span className="follower-preview-action"><BarChart3 size={15} aria-hidden="true" />查看详细趋势<ChevronRight size={15} aria-hidden="true" /></span>

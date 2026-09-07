@@ -3,10 +3,17 @@ import { AriaComponent, DataZoomComponent, GridComponent, LegendComponent, Toolt
 import { init, use, type ECharts, type EChartsCoreOption } from "echarts/core";
 import { LineChart } from "echarts/charts";
 import { CanvasRenderer } from "echarts/renderers";
+import { buildTrendSeries, getChartTimeExtent } from "./chartTrend";
+import { resolveChartViewport, type ChartViewport, type ChartZoomEvent } from "./chartViewport";
 
 // Register only the pieces used by the dashboard. Keeping this at module scope
 // also makes React StrictMode's development double-mount safe.
 use([LineChart, CanvasRenderer, GridComponent, TooltipComponent, LegendComponent, AriaComponent, DataZoomComponent]);
+
+export const CHART_REPLACE_OPTIONS = {
+  lazyUpdate: false,
+  replaceMerge: ["series", "dataZoom", "xAxis", "yAxis"],
+};
 
 export interface EChartsHostProps {
   option: EChartsCoreOption;
@@ -16,6 +23,7 @@ export interface EChartsHostProps {
   emptyMessage?: ReactNode;
   className?: string;
   height?: number | string;
+  compact?: boolean;
 }
 
 const cn = (...parts: Array<string | false | null | undefined>): string => parts.filter(Boolean).join(" ");
@@ -64,12 +72,23 @@ export function EChartsHost({
   emptyMessage = "暂无足够样本",
   className,
   height = 238,
+  compact = false,
 }: EChartsHostProps) {
   const chartElementRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<ECharts | null>(null);
   const reducedMotion = useReducedMotion();
   const summaryId = useId();
   const [rendered, setRendered] = useState(false);
+  const sourceOptionRef = useRef(option);
+  sourceOptionRef.current = option;
+  const domainRef = useRef<ChartViewport | undefined>(undefined);
+  const viewportRef = useRef<ChartViewport | undefined>(undefined);
+  const zoomFrameRef = useRef<number | null>(null);
+
+  const chartAria = {
+    enabled: !compact,
+    label: { description: `${ariaLabel}。平滑趋势；提示数值为原始采样。` },
+  };
 
   useEffect(() => {
     const element = chartElementRef.current;
@@ -81,10 +100,25 @@ export function EChartsHost({
     let chart: ECharts | null = null;
     let resizeObserver: ResizeObserver | null = null;
     const handleResize = () => chart?.resize();
+    const handleZoom = (event: unknown) => {
+      if (!event || typeof event !== "object") return;
+      viewportRef.current = resolveChartViewport(domainRef.current, event as ChartZoomEvent);
+      if (zoomFrameRef.current !== null) return;
+      zoomFrameRef.current = requestAnimationFrame(() => {
+        zoomFrameRef.current = null;
+        chart?.setOption(
+          { series: buildTrendSeries(sourceOptionRef.current, viewportRef.current) },
+          { replaceMerge: ["series"], lazyUpdate: false, silent: true },
+        );
+      });
+    };
     try {
       chart = init(element, undefined, { renderer: "canvas" });
       chartRef.current = chart;
-      chart.setOption({ ...option, animation: !reducedMotion }, { lazyUpdate: true });
+      domainRef.current = getChartTimeExtent(option);
+      viewportRef.current = domainRef.current;
+      chart.setOption({ ...option, series: buildTrendSeries(option), aria: chartAria, animation: !reducedMotion }, { lazyUpdate: false });
+      chart.on("datazoom", handleZoom);
       setRendered(true);
       if (typeof ResizeObserver !== "undefined") {
         resizeObserver = new ResizeObserver(handleResize);
@@ -101,6 +135,9 @@ export function EChartsHost({
       setRendered(false);
     }
     return () => {
+      if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
+      zoomFrameRef.current = null;
+      chart?.off("datazoom", handleZoom);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", handleResize);
       if (chartRef.current === chart) chartRef.current = null;
@@ -111,19 +148,38 @@ export function EChartsHost({
 
   useEffect(() => {
     if (!chartRef.current) return;
+    if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
+    zoomFrameRef.current = null;
+    const domain = getChartTimeExtent(option);
+    const domainChanged = domain?.[0] !== domainRef.current?.[0] || domain?.[1] !== domainRef.current?.[1];
+    if (domainChanged) viewportRef.current = domain;
+    domainRef.current = domain;
+    // Preserve the user's zoom on same-domain refreshes; a new date range starts in full view.
+    const currentZoom = (chartRef.current.getOption().dataZoom as Array<{ start?: number; end?: number }> | undefined)?.[0];
+    const dataZoom = Array.isArray(option.dataZoom)
+      ? option.dataZoom.map((zoom) => ({
+        ...zoom,
+        start: domainChanged ? 0 : currentZoom?.start ?? 0,
+        end: domainChanged ? 100 : currentZoom?.end ?? 100,
+        startValue: null,
+        endValue: null,
+        rangeMode: ["percent", "percent"],
+      }))
+      : option.dataZoom;
     try {
       chartRef.current.setOption(
-        { ...option, animation: !reducedMotion },
-        { lazyUpdate: true, replaceMerge: ["series", "dataZoom", "xAxis", "yAxis"] },
+        { ...option, dataZoom, series: buildTrendSeries(option, viewportRef.current), aria: chartAria, animation: !reducedMotion },
+        CHART_REPLACE_OPTIONS,
       );
     } catch {
       // A disposed chart can race an option update during StrictMode cleanup.
     }
-  }, [option, reducedMotion]);
+  }, [option, reducedMotion, ariaLabel, compact]);
 
   const style = { height: typeof height === "number" ? `${height}px` : height };
   return (
     <div className={cn("echarts-host", className)} style={style}>
+      {hasData && !compact && <span className="chart-trend-label">平滑趋势</span>}
       {hasData ? <div ref={chartElementRef} className={cn("echarts-canvas", rendered && "echarts-rendered")} role="img" aria-label={ariaLabel} aria-describedby={summaryId} /> : <div className="chart-empty" role="img" aria-label={ariaLabel} aria-describedby={summaryId}><span aria-hidden="true">∿</span><span>{emptyMessage}</span></div>}
       <p id={summaryId} className="chart-summary">{summary}</p>
     </div>
