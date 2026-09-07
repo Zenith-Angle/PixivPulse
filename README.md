@@ -108,6 +108,8 @@ PixivPulse 把每轮只读观察保存为本地时间序列，并让总览、作
 
 ## Agent 分析（源码 0.5.10）
 
+想了解实现原理与完整排错过程，可阅读 [Agent 构建与排错教程](docs/agent-building-tutorial.zh-CN.md)：涵盖协议、工具、正文采样、记忆、预算、流式交互、会话与验收，并提供源码路线和动手实验。
+
 在完整看板左侧打开 **Agent 分析 → 连接配置**。默认使用 DeepSeek 官方 Responses API：
 
 | 配置 | 默认值 |
