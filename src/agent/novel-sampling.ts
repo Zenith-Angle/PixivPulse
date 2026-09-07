@@ -9,9 +9,9 @@ export function sampleNovelText(text: string, focus: SamplingFocus, keyword: str
   const chars = Array.from(text);
   if (chars.length < 30) throw new Error("可见原文过短，无法形成可靠采样。");
   // Limits come from the application budget, never from text inside the page.
-  const maxChars = Math.max(30, Math.min(6000, Math.floor(limits.maxChars)));
-  const fraction = Math.max(0.1, Math.min(0.7, limits.fraction));
-  if (!Number.isFinite(maxChars) || !Number.isFinite(fraction)) throw new Error("Invalid reading budget");
+  if (!Number.isSafeInteger(limits.maxChars) || limits.maxChars < 30 || !Number.isFinite(limits.fraction) || limits.fraction <= 0 || limits.fraction > 1) throw new Error("Invalid reading budget");
+  const maxChars = Math.min(chars.length, limits.maxChars);
+  const fraction = limits.fraction;
   const totalBudget = Math.min(maxChars, Math.floor(chars.length * fraction));
   const width = focus === "balanced" ? Math.floor(totalBudget / 3) : totalBudget;
   let centers: number[];

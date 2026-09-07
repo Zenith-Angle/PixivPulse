@@ -30,13 +30,14 @@ it("compacts redundant metadata while retaining metrics, missing values and meas
   expect(compactStatistics("rank_growth", original)).toEqual({ rows: [{ key: "a", metrics: { views: null, bookmarks: 4 }, lastObservedAt: "now", interval: { fromAt: "a", toAt: "b", delta: { views: -5 } } }] });
   expect(original.rows[0]!.publishedAt).toBe("old");
 });
-it("deep sampling expands useful prose within hard limits and does not return the whole article", () => {
+it("sampling honors explicit deep limits and permits full coverage only when configured", () => {
   const text = "长文甲乙".repeat(5000);
   const standard = sampleNovelText(text, "balanced", "");
   const deep = sampleNovelText(text, "balanced", "", { maxChars: 6000, fraction: 0.7 });
   expect(standard.sampledCharacters).toBe(3000);
   expect(deep.sampledCharacters).toBe(6000);
   const short = sampleNovelText("字".repeat(1000), "balanced", "", { maxChars: 6000, fraction: 1 });
-  expect(short.coverage).toBeLessThanOrEqual(0.7);
+  expect(short.coverage).toBe(0.999);
+  expect(sampleNovelText("字".repeat(1000), "balanced", "", { maxChars: 6000, fraction: 0.7 }).coverage).toBeLessThanOrEqual(0.7);
   expect(() => sampleNovelText(text, "balanced", "", { maxChars: NaN, fraction: 0.7 })).toThrow();
 });

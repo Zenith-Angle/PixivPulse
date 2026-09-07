@@ -20,8 +20,10 @@ it("serializes reads with spacing and sends only a credentialed GET", async () =
   vi.stubGlobal("fetch", fetch);
   const signal = new AbortController().signal;
   await readNovelDetail("12", "balanced", "", limits, signal);
-  const second = readNovelDetail("13", "balanced", "", limits, signal);
+  const progress = vi.fn();
+  const second = readNovelDetail("13", "balanced", "", limits, signal, progress);
   await vi.advanceTimersByTimeAsync(4999); expect(fetch).toHaveBeenCalledTimes(1);
+  expect(progress).toHaveBeenCalledWith("等待请求间隔，约 5 秒");
   await vi.advanceTimersByTimeAsync(1); await second;
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(fetch.mock.calls[0]![1]).toMatchObject({ method: "GET", credentials: "include", redirect: "error" });

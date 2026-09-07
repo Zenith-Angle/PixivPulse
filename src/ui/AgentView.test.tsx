@@ -11,6 +11,32 @@ import * as runner from "../agent/runner";
 beforeEach(async () => { await deleteDB("pixivpulse-agent"); sessionStorage.clear(); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe("Agent workspace", () => {
+  it("streams public paragraphs apart from collapsed operations and copies only the final answer", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
+    let hooks!: runner.RunHooks, finish!: () => void;
+    vi.spyOn(runner, "runAgent").mockImplementation(async (_c, _m, _d, _p, _s, value) => { hooks = value; await new Promise<void>(resolve => { finish = resolve; }); });
+    const clipboard = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboard } });
+    render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "检查数据缺口" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" })); await waitFor(() => expect(hooks).toBeDefined());
+    hooks.onCommentary?.("p", "先核对"); await screen.findByText("先核对");
+    hooks.onCommentary?.("p", "先核对记录日期，再判断缺口。");
+    hooks.onOperation?.({ id: "o", kind: "operation", text: "检查数据完整性", at: "now", status: "running" });
+    expect(await screen.findByText("先核对记录日期，再判断缺口。")).toBeVisible();
+    const operation = (await screen.findByText("检查数据完整性")).closest("details")!;
+    expect(operation).not.toHaveAttribute("open");
+    expect(document.querySelector(".agent-answer .agent-markdown")?.textContent).toBe("检查数据缺口");
+    hooks.onOperation?.({ id: "o", kind: "operation", text: "检查数据完整性", at: "now", status: "complete" });
+    hooks.onText("已确认的最终结论。"); finish();
+    await screen.findByRole("button", { name: "重新生成" });
+    fireEvent.click(within(screen.getByText("已确认的最终结论。").closest("article")!).getByRole("button", { name: "复制" }));
+    await waitFor(() => expect(clipboard).toHaveBeenCalledWith("已确认的最终结论。"));
+    const saved = (await listConversations("preview"))[0]!.messages.at(-1)!;
+    expect(saved.activity?.map(item => item.kind)).toEqual(["commentary", "operation"]);
+    expect(saved.activity?.[0]?.text).toBe("先核对记录日期，再判断缺口。");
+    expect(saved.content).toBe("已确认的最终结论。");
+  });
   it("restores the last selected conversation on re-entry and remount instead of a new draft", async () => {
     const data = createDemoData();
     for (const [id, at] of [["older", "2026-09-01"], ["newer", "2026-09-02"]]) await saveConversation({ id: id!, title: id!, accountId: "preview", updatedAt: at!, messages: [{ id: id!, role: "user", content: `内容 ${id}`, status: "complete", at: at!, traces: [] }] });
@@ -68,6 +94,15 @@ describe("Agent workspace", () => {
     await screen.findByText("连接配置已保存。");
     expect(await loadAgentConfig()).toMatchObject({ readingDepth: "custom", customReadingChars: 2200, customReadingPercent: 45, inputBudget: 64000, totalInputBudget: 160000 });
   });
+  it("applies relaxed limits without changing the connection and key", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "retained-key", model: "retained-model", inputBudget: 64000, totalInputBudget: 160000, maxSteps: 4, readingDepth: "deep" });
+    render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "连接配置" }));
+    fireEvent.click(screen.getByRole("button", { name: "使用宽松设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await screen.findByText("连接配置已保存。");
+    expect(await loadAgentConfig()).toMatchObject({ apiKey: "retained-key", model: "retained-model", inputBudget: 0, totalInputBudget: 0, maxSteps: 0, readingDepth: "auto" });
+  });
   it("shows live progress and flushes the last text burst while generation remains open", async () => {
     await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
     vi.spyOn(runner, "runAgent").mockImplementation(async (_c, _m, _d, _p, signal, hooks) => {
@@ -94,10 +129,10 @@ describe("Agent workspace", () => {
     await screen.findByRole("button", { name: "收起执行过程" });
     await waitFor(() => expect(hooks).toBeDefined());
     hooks.onText("先核对样本范围。"); hooks.onToolTurn?.("先核对样本范围。");
-    await waitFor(() => expect(document.querySelector(".assistant .agent-markdown")?.textContent).toBe(""));
+    await waitFor(() => expect(document.querySelector(".assistant .agent-answer .agent-markdown")?.textContent).toBe(""));
     expect(await screen.findByText("先核对样本范围。")).toBeVisible();
     hooks.onProgress?.("结合已获取的证据组织回答"); hooks.onText("保留角色行动的细节。");
-    await screen.findByRole("button", { name: "展开执行过程" });
+    fireEvent.click(await screen.findByRole("button", { name: "收起执行过程" }));
     expect(screen.getByText("先核对样本范围。")).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "展开执行过程" }));
     expect(screen.getByText("先核对样本范围。")).toBeVisible();

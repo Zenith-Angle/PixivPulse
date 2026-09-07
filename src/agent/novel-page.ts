@@ -21,19 +21,20 @@ async function setGate(value: number) {
   nextAt = value;
   if (chrome.storage?.local) await chrome.storage.local.set({ [GATE_KEY]: value });
 }
-async function fetchNovelResource(url: string, signal: AbortSignal): Promise<string> {
+async function fetchNovelResource(url: string, signal: AbortSignal, onProgress?: (detail: string) => void): Promise<string> {
   const target = new URL(url);
   if (target.origin !== "https://www.pixiv.net" || (!/^\/ajax\/novel\/\d+$/.test(target.pathname) || !!target.search) || target.hash || target.username || target.password) throw new Error("原文地址不在允许范围内。");
   const task = async () => {
     await readGate();
     const wait = nextAt - Date.now();
     if (wait > 6000) throw new Error(`应用的正文读取冷却尚未结束，约剩 ${Math.ceil(wait / 60000)} 分钟。这不是新的 Pixiv 限流响应；本问应停止读取，不要换工具、等待重试或通过新对话绕过。`);
-    if (wait > 0) await delay(wait, signal);
+    if (wait > 0) { onProgress?.(`等待请求间隔，约 ${Math.ceil(wait / 1000)} 秒`); await delay(wait, signal); }
     signal.throwIfAborted();
     await setGate(Date.now() + 5000);
     const timeout = AbortSignal.timeout(25000);
     const combined = AbortSignal.any([signal, timeout]);
     try {
+      onProgress?.("正在读取 Pixiv 正文");
       const response = await fetch(url, { method: "GET", credentials: "include", redirect: "error", signal: combined, headers: { Accept: "application/json" } });
       if (!response.ok) {
         await response.body?.cancel();
@@ -63,6 +64,7 @@ async function fetchNovelResource(url: string, signal: AbortSignal): Promise<str
       throw error;
     }
   };
+  onProgress?.("等待正文读取队列");
   if (navigator.locks) return navigator.locks.request("pixivpulse-original-network", { signal }, task);
   const running = tail.catch(() => {}).then(task); tail = running;
   return running;
@@ -84,9 +86,10 @@ export function sampleNovelDetail(value: unknown, id: string, focus: SamplingFoc
   return { ...sampleNovelText(text, focus, keyword, limits), title: typeof body.title === "string" ? body.title : "", seriesTitle: typeof body.seriesNavData?.title === "string" ? body.seriesNavData.title : null, transport: "pixiv-web-api", sampledAt: new Date().toISOString(), contentScope: "当前作品接口正文的定点采样，不是系列全文；覆盖率按规范化字符计数。" };
 }
 
-export async function readNovelDetail(id: string, focus: SamplingFocus, keyword: string, limits: ReadingLimits, signal: AbortSignal) {
+export async function readNovelDetail(id: string, focus: SamplingFocus, keyword: string, limits: ReadingLimits, signal: AbortSignal, onProgress?: (detail: string) => void) {
   if (!/^\d+$/.test(id)) throw new Error("无效作品 ID。");
-  const text = await fetchNovelResource(`https://www.pixiv.net/ajax/novel/${id}`, signal);
+  const text = await fetchNovelResource(`https://www.pixiv.net/ajax/novel/${id}`, signal, onProgress);
+  onProgress?.("整理多位置正文片段");
   try { return sampleNovelDetail(JSON.parse(text), id, focus, keyword, limits); }
   catch (error) { await pauseNovelReading(); if (error instanceof SyntaxError) throw new Error("Pixiv 正文接口返回了无法解析的 JSON；已停止读取。"); throw error; }
 }

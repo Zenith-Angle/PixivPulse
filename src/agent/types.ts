@@ -11,7 +11,7 @@ export interface AgentConfig {
   memoryEnabled: boolean;
   sampleOriginals: boolean;
   analysisFocus: "auto" | "content" | "metrics";
-  readingDepth: "light" | "standard" | "deep" | "custom";
+  readingDepth: "auto" | "light" | "standard" | "deep" | "custom";
   customReadingChars: number;
   customReadingPercent: number;
   temperature: number | null;
@@ -24,9 +24,9 @@ export interface AgentConfig {
 
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash", apiKey: "", protocol: "responses",
-  contextWindow: 1000000, maxOutputTokens: 8192, maxSteps: 4, temperature: null,
+  contextWindow: 1000000, maxOutputTokens: 8192, maxSteps: 0, temperature: null,
   outputParameter: "max_completion_tokens", timeoutSeconds: 120,
-  inputBudget: 64000, totalInputBudget: 160000, memoryEnabled: true, sampleOriginals: false, analysisFocus: "auto", readingDepth: "standard", customReadingChars: 4500, customReadingPercent: 60,
+  inputBudget: 0, totalInputBudget: 0, memoryEnabled: true, sampleOriginals: false, analysisFocus: "auto", readingDepth: "auto", customReadingChars: 4500, customReadingPercent: 60,
   rememberKey: false, shareData: false, instructions: "例如：我在 Pixiv 创作同人小说。请先给结论，再结合已读正文分析人物关系、角色塑造和叙事节奏，给出两三条具体建议。区分原作设定与本篇证据，不确定时说明；称呼作品时优先用标题或系列与章节。",
 };
 
@@ -39,6 +39,25 @@ export interface ToolTrace {
   arguments: string;
   result: string;
   at: string;
+}
+
+export interface ReadingProgress {
+  key: string;
+  title: string;
+  status: "queued" | "reading" | "complete" | "cached" | "error" | "skipped";
+  detail?: string;
+  characters?: number | undefined;
+  coverage?: number | undefined;
+}
+
+export interface AgentActivity {
+  id: string;
+  kind: "commentary" | "operation";
+  text: string;
+  at: string;
+  status?: "running" | "complete" | "error" | "stopped";
+  sourceId?: string;
+  reading?: ReadingProgress[];
 }
 
 export interface AgentMessage {
@@ -54,6 +73,8 @@ export interface AgentMessage {
   trimmedTurns?: number;
   progress?: { label: string; at: string; detail?: string }[];
   phase?: "working" | "answering";
+  reading?: ReadingProgress[];
+  activity?: AgentActivity[];
 }
 
 export interface Conversation {

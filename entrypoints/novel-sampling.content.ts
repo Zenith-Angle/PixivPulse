@@ -8,7 +8,7 @@ export default defineContentScript({
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (sender.id !== chrome.runtime.id || message?.type !== "AGENT_SAMPLE_NOVEL") return;
       const id = new URL(location.href).searchParams.get("id");
-      if (id !== message.id || !SAMPLING_FOCI.includes(message.focus) || typeof message.keyword !== "string" || message.keyword.length > 80 || !Number.isInteger(message.maxChars) || message.maxChars < 30 || message.maxChars > 6000 || !Number.isFinite(message.fraction) || message.fraction < 0.1 || message.fraction > 0.7) {
+      if (id !== message.id || !SAMPLING_FOCI.includes(message.focus) || typeof message.keyword !== "string" || message.keyword.length > 80 || !Number.isSafeInteger(message.maxChars) || message.maxChars < 30 || !Number.isFinite(message.fraction) || message.fraction <= 0 || message.fraction > 1) {
         sendResponse({ error: "采样参数无效。" }); return;
       }
       // Read only the rendered novel body, never descriptions, recommendations, scripts or hidden state.

@@ -9,7 +9,7 @@ import { suggestedQuestions } from "../agent/prompts";
 import { clearAgentMemory } from "../agent/storage";
 import { runAgent } from "../agent/runner";
 import { conversationMarkdown, deleteConversation, listConversations, loadAgentConfig, saveAgentConfig, saveConversation } from "../agent/storage";
-import { DEFAULT_AGENT_CONFIG, type AgentConfig, type AgentMessage, type Conversation } from "../agent/types";
+import { DEFAULT_AGENT_CONFIG, type AgentConfig, type AgentMessage, type ReadingProgress, type Conversation } from "../agent/types";
 import { createTextStream } from "./agent-text-stream";
 import { triggerDownload } from "./helpers";
 
@@ -19,29 +19,55 @@ const AgentMarkdown = memo(function AgentMarkdown({ content }: { content: string
   return <div className="agent-markdown"><Markdown remarkPlugins={[remarkGfm]} skipHtml components={{ img: () => null, a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> }}>{content}</Markdown></div>;
 });
 
+function ReadingQueue({ reading }: { reading: ReadingProgress[] }) {
+  const readingRef = useRef<HTMLDivElement>(null);
+  const completed = reading.filter(item => item.status === "complete" || item.status === "cached").length;
+  const currentReading = reading.findIndex(item => item.status === "reading");
+  useEffect(() => { const list = readingRef.current; const item = list?.children[currentReading] as HTMLElement | undefined; if (list && item) list.scrollTop = Math.max(0, item.offsetTop - list.clientHeight / 2); }, [currentReading]);
+  return <div className="agent-reading"><strong>正文采样 · 已完成 {completed}/{reading.length}</strong><div className="agent-reading-list" role="list" aria-label="正文读取队列" ref={readingRef}>{reading.map((item, index) => <div role="listitem" className={`agent-reading-item ${item.status}`} key={item.key}><span className="agent-reading-index">{index + 1}</span><div><span>{item.title}</span><small>{({ queued: "排队", reading: "读取中", complete: "已采样", cached: "缓存复用", error: "读取失败", skipped: "已跳过" })[item.status]}{item.detail ? ` · ${item.detail}` : ""}{item.characters !== undefined ? ` · ${item.characters.toLocaleString()} 字符` : ""}{item.coverage !== undefined ? ` · 覆盖 ${(item.coverage * 100).toFixed(1)}%` : ""}</small></div></div>)}</div></div>;
+}
+
 function RunProgress({ message }: { message: AgentMessage }) {
   const running = message.status === "running";
   const autoOpen = running && message.phase !== "answering";
   const [open, setOpen] = useState(autoOpen);
+  const lifecycle = `${message.status}:${autoOpen}`;
+  const previousLifecycle = useRef(lifecycle);
   const [now, setNow] = useState(Date.now());
   const listRef = useRef<HTMLOListElement>(null);
   const follow = useRef(true);
-  useEffect(() => setOpen(autoOpen), [autoOpen, message.status]);
+  useEffect(() => {
+    // Only a real run transition may override the user's toggle. An initial
+    // passive effect must not close history the user has just expanded.
+    if (previousLifecycle.current !== lifecycle) { previousLifecycle.current = lifecycle; setOpen(autoOpen); }
+  }, [autoOpen, lifecycle]);
   useEffect(() => { if (!running) return; const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer); }, [running]);
   const rows = message.progress ?? [];
   useEffect(() => { const list = listRef.current; if (list && open && follow.current) list.scrollTop = list.scrollHeight; }, [rows.length, open]);
-  if (!rows.length && !running) return null;
+  const reading = message.reading ?? [];
+  if (!rows.length && !reading.length && !message.activity?.length && !running) return null;
   const label = running ? rows.at(-1)?.label ?? "正在启动" : message.status === "complete" ? "执行完成" : message.status === "stopped" ? "执行已停止" : "执行遇到问题";
-  return <section className="agent-progress" aria-label="Agent 执行过程">
+  return <section className={`agent-progress ${message.activity?.length ? "conversational" : ""}`} aria-label="Agent 执行过程">
     <div className="agent-progress-header">
       <span className={`agent-progress-dot ${running ? "running" : ""}`} />
       <span className="agent-progress-label" role={running ? "status" : undefined}>{label}{running && ` · 已用时 ${Math.max(0, Math.floor((now - Date.parse(message.at)) / 1000))} 秒`}</span>
-      <small>{rows.length} 条记录</small>
+      <small>{message.activity?.length ?? rows.length} 条记录</small>
       <button type="button" className="agent-process-toggle" aria-label={open ? "收起执行过程" : "展开执行过程"} title={open ? "收起执行过程" : "展开执行过程"} aria-expanded={open} aria-controls={`process-${message.id}`} onClick={() => setOpen(value => !value)}>{open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
     </div>
-    <ol id={`process-${message.id}`} hidden={!open} ref={listRef} onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
+    <div id={`process-${message.id}`} hidden={!open}>
+    {message.activity?.length ? <div className="agent-activity-feed">{message.activity.map(item => item.kind === "commentary" ?
+      <div className="agent-commentary" key={item.id}><AgentMarkdown content={item.text} /></div> :
+      <details className={`agent-operation ${item.status ?? "complete"}`} key={item.id}>
+        <summary><span className="agent-tool-icon" aria-hidden="true">›_</span><span>{item.text}</span><small>{item.reading?.length ? `${item.reading.filter(row => row.status === "complete" || row.status === "cached").length}/${item.reading.length} · ` : ""}{item.status === "running" ? "执行中" : item.status === "error" ? "失败" : item.status === "stopped" ? "已停止" : "完成"}</small><ChevronDown size={13} /></summary>
+        {item.reading?.length ? <ReadingQueue reading={item.reading} /> : null}
+        {item.sourceId && message.traces.filter(trace => trace.id === item.sourceId).map(trace => <div className="agent-operation-evidence" key={trace.id}><small>来源 [{trace.id}]{trace.cached ? " · 缓存复用" : ""}</small><pre>{trace.arguments}</pre><pre>{trace.result}</pre></div>)}
+      </details>)}</div> : <>
+    {!!reading.length && <ReadingQueue reading={reading} />}
+    <ol ref={listRef} onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
       {rows.map((row, index) => <li key={index} className={running && index === rows.length - 1 ? "current" : ""}><time>{new Date(row.at).toLocaleTimeString()}</time><div><span>{row.label}</span>{row.detail && <p className="agent-process-note">{row.detail}</p>}</div></li>)}
     </ol>
+    </>}
+    </div>
   </section>;
 }
 
@@ -95,23 +121,23 @@ function ConnectionSettings({ initial, onSave, onClose }: { initial: AgentConfig
         <label>API 协议<select value={draft.protocol} onChange={(e) => update("protocol", e.target.value as AgentConfig["protocol"])}><option value="responses">Responses API</option><option value="chat">Chat Completions（兼容）</option></select></label>
         <label>Model name<input list="agent-model-list" value={draft.model} onChange={(e) => update("model", e.target.value)} placeholder="填写服务商的模型 ID" autoComplete="off" /><datalist id="agent-model-list">{models.map((model) => <option key={model} value={model} />)}</datalist></label>
         <label className="agent-wide">API key<input type="password" value={draft.apiKey} onChange={(e) => update("apiKey", e.target.value)} autoComplete="new-password" spellCheck={false} placeholder="本地无认证服务可留空" /></label>
-        <label>上下文窗口（tokens）<input type="number" min={4096} max={2000000} step={1} value={draft.contextWindow} onChange={(e) => update("contextWindow", Number(e.target.value))} /></label>
-        <label>最大输出（tokens）<input type="number" min={128} max={128000} value={draft.maxOutputTokens} onChange={(e) => update("maxOutputTokens", Number(e.target.value))} /></label>
+        <label>上下文窗口（tokens）<input type="number" min={4096}  step={1} value={draft.contextWindow} onChange={(e) => update("contextWindow", Number(e.target.value))} /></label>
+        <label>最大输出（tokens）<input type="number" min={128}  value={draft.maxOutputTokens} onChange={(e) => update("maxOutputTokens", Number(e.target.value))} /></label>
         <label>分析侧重<select value={draft.analysisFocus} onChange={(e) => update("analysisFocus", e.target.value as AgentConfig["analysisFocus"])}><option value="auto">自动：按问题选择</option><option value="content">正文优先</option><option value="metrics">指标优先</option></select></label>
-        <label>正文阅读深度<select value={draft.readingDepth} onChange={(e) => update("readingDepth", e.target.value as AgentConfig["readingDepth"])}><option value="light">轻量：最多 1,500 字 / 30%</option><option value="standard">标准：最多 3,000 字 / 50%</option><option value="deep">深入：最多 6,000 字 / 70%</option><option value="custom">自定义</option></select><small>每问每篇累计上限；多篇会分配输入预算，不代表阅读全文。</small></label>
+        <label>正文阅读深度<select value={draft.readingDepth} onChange={(e) => update("readingDepth", e.target.value as AgentConfig["readingDepth"])}><option value="auto">自动：按上下文分配，不限固定字数或比例</option><option value="light">轻量：最多 1,500 字 / 30%</option><option value="standard">标准：最多 3,000 字 / 50%</option><option value="deep">深入：最多 6,000 字 / 70%</option><option value="custom">自定义</option></select><small>自动档不设额外阅读深度上限；多篇共享实际可用上下文，短篇可能覆盖全文。</small></label>
         {draft.readingDepth === "custom" && <>
-          <label>每篇累计采样字数<input type="number" min={150} max={6000} step={1} value={draft.customReadingChars} onChange={(e) => update("customReadingChars", Number(e.target.value))} /></label>
-          <label>每篇累计覆盖上限（%）<input type="number" min={10} max={70} step={1} value={draft.customReadingPercent} onChange={(e) => update("customReadingPercent", Number(e.target.value))} /><small>字数、比例、剩余输入预算取最小值，不读取全文。</small></label>
+          <label>每篇累计采样字数<input type="number" min={150}  step={1} value={draft.customReadingChars} onChange={(e) => update("customReadingChars", Number(e.target.value))} /></label>
+          <label>每篇累计覆盖上限（%）<input type="number" min={1} max={100} step={1} value={draft.customReadingPercent} onChange={(e) => update("customReadingPercent", Number(e.target.value))} /><small>字数、比例、剩余上下文取最小值；可设置至 100%。</small></label>
         </>}
-        <label>单次输入预算（保守估算）<input type="number" min={8000} max={200000} value={draft.inputBudget} onChange={(e) => update("inputBudget", Number(e.target.value))} /></label>
-        <label>单问累计输入预算（保守估算）<input type="number" min={16000} max={500000} value={draft.totalInputBudget} onChange={(e) => update("totalInputBudget", Number(e.target.value))} /></label>
-        <div className="agent-wide"><button type="button" onClick={() => setDraft(current => ({ ...current, inputBudget: DEFAULT_AGENT_CONFIG.inputBudget, totalInputBudget: DEFAULT_AGENT_CONFIG.totalInputBudget }))}>使用推荐输入预算（64,000 / 160,000）</button></div>
-        <label>工具调用轮数<input type="number" min={1} max={20} value={draft.maxSteps} onChange={(e) => update("maxSteps", Number(e.target.value))} /></label>
-        <label>请求超时（秒）<input type="number" min={10} max={600} value={draft.timeoutSeconds} onChange={(e) => update("timeoutSeconds", Number(e.target.value))} /></label>
+        <label>单次输入预算（保守估算）<input type="number" min={0} value={draft.inputBudget} onChange={(e) => update("inputBudget", Number(e.target.value))} /><small>0 = 不设额外上限，按模型上下文窗口分配。</small></label>
+        <label>单问累计输入预算（保守估算）<input type="number" min={0} value={draft.totalInputBudget} onChange={(e) => update("totalInputBudget", Number(e.target.value))} /><small>0 = 不设累计上限；实际用量仍会显示。</small></label>
+        <div className="agent-wide"><button type="button" onClick={() => setDraft(current => ({ ...current, inputBudget: 64000, totalInputBudget: 160000 }))}>使用推荐输入预算（64,000 / 160,000）</button><button type="button" onClick={() => setDraft(current => ({ ...current, inputBudget: 0, totalInputBudget: 0, maxSteps: 0, readingDepth: "auto" }))}>使用宽松设置</button><small className="agent-muted">保留连接与密钥，只移除应用的额外输入、累计、轮数和阅读深度上限。模型上下文、服务额度及网站冷却仍然有效。</small></div>
+        <label>工具调用轮数<input type="number" min={0} value={draft.maxSteps} onChange={(e) => update("maxSteps", Number(e.target.value))} /><small>0 = 自动继续；无新证据或上下文不足时结束，也可随时停止。</small></label>
+        <label>请求超时（秒）<input type="number" min={10} max={86400} value={draft.timeoutSeconds} onChange={(e) => update("timeoutSeconds", Number(e.target.value))} /></label>
         <label>Temperature（可留空）<input type="number" min={0} max={2} step={0.1} value={draft.temperature ?? ""} placeholder="由模型决定" onChange={(e) => update("temperature", e.target.value === "" ? null : Number(e.target.value))} /></label>
         {draft.protocol === "chat" && <label>输出上限参数<select value={draft.outputParameter} onChange={(e) => update("outputParameter", e.target.value as AgentConfig["outputParameter"])}><option value="max_completion_tokens">max_completion_tokens</option><option value="max_tokens">max_tokens（传统兼容）</option></select></label>}
         <label className="agent-wide">回答偏好<textarea rows={3} maxLength={6000} value={draft.instructions} onChange={(e) => update("instructions", e.target.value)} placeholder="例如：先给结论，再解释依据；侧重 Pixiv 同人小说的人物关系与叙事节奏。" /></label>
-        <label className="agent-check agent-wide"><input type="checkbox" checked={draft.sampleOriginals} onChange={(e) => update("sampleOriginals", e.target.checked)} /><span>允许按需采样 Pixiv 小说原文<small>仅在数据分享开启时使用。优先复用已打开页面；否则用当前 Pixiv 登录态直接读取小说正文接口，不新建标签页；只保存、发送定点片段，按阅读档位或自定义设置，每问每篇累计最多 6,000 字 / 70%，并受本轮预算约束。每问最多 3 篇次，支持一次调用比较多篇。页面本身可能加载完整正文，但全文不进入 Agent 上下文或缓存。</small></span></label>
+        <label className="agent-check agent-wide"><input type="checkbox" checked={draft.sampleOriginals} onChange={(e) => update("sampleOriginals", e.target.checked)} /><span>允许按需采样 Pixiv 小说原文<small>仅在数据分享开启时使用。优先复用已打开页面；否则用当前 Pixiv 登录态直接读取小说正文接口，不新建标签页；按问题要求读取多篇作品，逐篇展示队列与状态。自动档不设固定篇数、字数或比例上限，实际范围受可用上下文约束，可能覆盖短篇全文。读取过程遵守网站请求间隔与冷却，片段按配置缓存。</small></span></label>
         <label className="agent-check agent-wide"><input type="checkbox" checked={draft.memoryEnabled} onChange={(e) => update("memoryEnabled", e.target.checked)} /><span>自动复用本地分析证据<small>仅缓存只读工具结果，数据或账号变化即失效，24 小时过期；最多 40 条 / 256 KB，不保存模型推断。关闭数据分享后不会发送这些证据。</small></span></label>
         <label className="agent-check agent-wide"><input type="checkbox" checked={draft.rememberKey} onChange={(e) => update("rememberKey", e.target.checked)} /><span>在本机记住 API key<small>默认仅保留在当前标签页。勾选后以未加密形式保存在扩展本地数据库，不进入作品备份或对话导出。</small></span></label>
         <label className="agent-check agent-wide"><input type="checkbox" checked={draft.shareData} onChange={(e) => update("shareData", e.target.checked)} /><span>允许 Agent 查询本地作品和历史数据<small>提问时，模型按需获取作品标题、简介、指标、采样时间及粉丝统计，并发送至上方 API 服务。关闭后仅进行普通对话。</small></span></label>
@@ -181,7 +207,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
   useEffect(() => {
     const container = messagesRef.current;
     if (active && container && followOutput.current) container.scrollTop = container.scrollHeight;
-  }, [active, ready, settings, selectedId, current?.messages.at(-1)?.content, current?.messages.at(-1)?.traces.length, current?.messages.at(-1)?.progress?.length, current?.messages.at(-1)?.phase]);
+  }, [active, ready, settings, selectedId, current?.messages.at(-1)?.content, current?.messages.at(-1)?.traces.length, current?.messages.at(-1)?.progress?.length, current?.messages.at(-1)?.activity?.at(-1)?.text, current?.messages.at(-1)?.activity?.length, current?.messages.at(-1)?.phase]);
   useEffect(() => {
     if (!runningIds.length) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
@@ -242,15 +268,42 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
       try {
         await runAgent(checked, conversation.messages.slice(0, -1), data, isPreview, abort.signal, {
           onText: (chunk) => {
-            assistant.content += chunk; assistant.phase = "answering"; stream.push(chunk);
+            // A text delta may precede a tool call. Keep the existing process open
+            // until the turn is classified; never fold/unfold on an assumed final answer.
+            assistant.content += chunk; stream.push(chunk);
             if (Date.now() - lastSave > 1500) { void persist(); lastSave = Date.now(); }
           },
           onToolTurn: (text) => {
             assistant.phase = "working"; assistant.content = "";
-            if (text.trim()) { const rows = assistant.progress ??= []; rows.push({ label: "模型执行说明", detail: text.slice(0, 6000), at: new Date().toISOString() }); if (rows.length > 80) rows.shift(); }
+            if (text.trim()) { const activity = assistant.activity ??= []; activity.push({ id: `legacy:${activity.length}`, kind: "commentary", text: text.slice(0, 6000), at: new Date().toISOString() }); const rows = assistant.progress ??= []; rows.push({ label: "模型执行说明", detail: text.slice(0, 6000), at: new Date().toISOString() }); if (rows.length > 80) rows.shift(); }
             stream.reset(); void persist();
           },
           onProgress: (label) => { const rows = assistant.progress ??= []; if (rows.at(-1)?.label === label) return; rows.push({ label, at: new Date().toISOString() }); if (rows.length > 80) rows.shift(); paint(); },
+          onCommentary: (id, text) => {
+            if (!assistant.content) assistant.phase = "working";
+            const rows = assistant.activity ??= []; const item = rows.find(row => row.id === id);
+            if (item?.text === text) return;
+            if (item) item.text = text; else rows.push({ id, kind: "commentary", text, at: new Date().toISOString() });
+            if (rows.length > 200) rows.shift();
+            paint();
+            if (Date.now() - lastSave > 1500) { void persist(); lastSave = Date.now(); }
+          },
+          onOperation: (event) => {
+            if (event.status === "running") assistant.phase = "working";
+            const rows = assistant.activity ??= []; const index = rows.findIndex(row => row.id === event.id);
+            if (index < 0) rows.push(event); else rows[index] = { ...rows[index], ...event };
+            if (rows.length > 200) rows.shift();
+            paint();
+          },
+          onReading: (event) => {
+            assistant.phase = "working";
+            const rows = assistant.reading ??= []; const index = rows.findIndex(row => row.key === event.key);
+            if (index < 0) rows.push(event); else rows[index] = event;
+            const operation = assistant.activity?.findLast(item => item.kind === "operation" && item.status === "running");
+            if (operation) { const items = operation.reading ??= []; const index = items.findIndex(item => item.key === event.key); if (index < 0) items.push(event); else items[index] = event; }
+            paint();
+            if (["complete", "cached", "error", "skipped"].includes(event.status)) void persist();
+          },
           onTrace: async (trace) => { assistant.traces.push(trace); paint(); await persist(); },
           onBudget: (trimmed) => { assistant.trimmedTurns = trimmed; },
           onUsage: (usage) => { assistant.usage = usage; },
@@ -261,6 +314,8 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
       } catch (e) {
         assistant.status = abort.signal.aborted ? "stopped" : "error";
         assistant.error = abort.signal.aborted ? "生成已停止，可重试。" : safeAgentError(e);
+        assistant.activity = assistant.activity?.map(item => item.status === "running" ? { ...item, status: "stopped", reading: item.reading?.map(row => row.status === "queued" || row.status === "reading" ? { ...row, status: "skipped", detail: "本轮已中断" } : row) ?? [] } : item) ?? [];
+        assistant.reading = assistant.reading?.map(item => item.status === "queued" || item.status === "reading" ? { ...item, status: "skipped", detail: abort.signal.aborted ? "生成已停止，未完成读取" : "本轮已中断，未完成读取" } : item) ?? [];
       } finally { stream.flush(); await persist(); display(conversation); }
     };
     try {
@@ -298,7 +353,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
         <div className="agent-data-banner"><span className={`status-dot ${config.shareData ? "agent-connected" : ""}`} />{config.shareData ? `${isPreview ? "演示数据" : "本地知识"} · ${data.works.length} 件作品 · ${data.samples.length} 条历史样本` : "普通对话 · 本地数据分享未开启"}<span>{config.shareData ? `提问时按需发送 · 原文采样${config.sampleOriginals && !isPreview ? "已开启" : "未开启"}` : "在连接配置中开启数据分析"}</span></div>
         <div className="agent-messages" ref={messagesRef} onScroll={(event) => { const element = event.currentTarget; followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }} role="log" aria-label="聊天消息" aria-live="off">
           {!current?.messages.length && <div className="agent-welcome"><div className="agent-orb"><Bot size={32} /></div><p className="eyebrow">ASK YOUR DATA</p><h2>从一个问题开始，<br />读懂作品背后的变化。</h2><p>把真实采样变成有依据的分析。Agent 可以检索作品、比较增长、查看粉丝趋势，并展示查询来源。</p><div className="agent-preset-row" aria-label="问题分类">{Object.keys(promptGroups).map(category => <button type="button" key={category} aria-pressed={promptCategory === category} onClick={() => setPromptCategory(category)}>{category}</button>)}</div><div className="agent-suggestions">{prompts.map((prompt) => <button type="button" key={prompt} onClick={() => setQuestion(prompt)}>{prompt}<Send size={14} /></button>)}</div></div>}
-          {current?.messages.map((message) => <article key={message.id} className={`agent-message ${message.role}`}><div className="agent-message-meta"><strong>{message.role === "user" ? "你" : "Agent"}</strong><span>{message.model}</span>{message.status === "running" && <span role="status">正在分析…</span>}</div><RunProgress message={message} /><AgentMarkdown content={message.content} />
+          {current?.messages.map((message) => <article key={message.id} className={`agent-message ${message.role}`}><div className="agent-message-meta"><strong>{message.role === "user" ? "你" : "Agent"}</strong><span>{message.model}</span>{message.status === "running" && <span role="status">正在分析…</span>}</div><RunProgress message={message} /><div className={`agent-answer ${message.status === "running" ? "agent-live-message" : ""}`}><AgentMarkdown content={message.content} /></div>
             {message.traces.length > 0 && <details className="agent-sources"><summary>已查询 {message.traces.length} 个来源</summary>{message.traces.map((trace) => <details key={trace.id}><summary>[{trace.id}] {trace.name}{trace.cached ? " · 记忆复用" : ""}</summary><small>{trace.at}</small><pre>{trace.arguments}</pre><pre>{trace.result}</pre></details>)}</details>}
             {!!message.trimmedTurns && <p className="agent-muted">本轮已省略较早的 {message.trimmedTurns} 轮上下文；历史记录仍保留。</p>}
             {message.usage && (message.usage.input > 0 || message.usage.output > 0) && <p className="agent-muted">本轮累计 tokens：输入 {message.usage.input.toLocaleString()} · 输出 {message.usage.output.toLocaleString()}{message.usage.requests !== undefined && <> · {message.usage.requests} 次请求 · 记忆命中 {message.usage.memoryHits ?? 0} 次 · 服务商缓存输入 {message.usage.cachedInput ?? 0}{message.usage.evidenceBytes && <> · 工具证据：正文 {(message.usage.evidenceBytes.content / 1024).toFixed(1)} KB / 统计 {(message.usage.evidenceBytes.statistics / 1024).toFixed(1)} KB（非 token）</>}</>}</p>}

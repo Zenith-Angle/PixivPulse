@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { partialCommentary } from "./commentary";
 import type { ChatCompletionMessageParam, ChatCompletionAssistantMessageParam } from "openai/resources/chat/completions";
 import type { ResponseInputItem } from "openai/resources/responses/responses";
 import { validateConfig } from "./config";
@@ -46,7 +47,7 @@ export async function listModels(config: AgentConfig, signal: AbortSignal): Prom
   return [...new Set(result.data.map((model) => model.id).filter((id) => typeof id === "string"))].sort();
 }
 
-export async function generateTurn(config: AgentConfig, system: string, chat: WireMessage[], input: ResponseInputItem[], tools: ToolDefinition[], signal: AbortSignal, onText: (text: string) => void, onProgress: (stage: string) => void = () => {}): Promise<TurnResult> {
+export async function generateTurn(config: AgentConfig, system: string, chat: WireMessage[], input: ResponseInputItem[], tools: ToolDefinition[], signal: AbortSignal, onText: (text: string) => void, onProgress: (stage: string) => void = () => {}, onCommentary: (index: number, text: string) => void = () => {}): Promise<TurnResult> {
   const abort = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; abort.abort(); }, config.timeoutSeconds * 1000);
@@ -74,6 +75,8 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
       // Some compatible servers send text only in done/item events. Reconcile each
       // block independently so a missing delta neither delays text nor drops it.
       const blocks = new Map<string, string>();
+      const functions = new Map<number, { name: string; arguments: string }>();
+      const publicUpdate = (index: number, item: { name: string; arguments: string }) => { if (item.name === "report_progress") { const value = partialCommentary(item.arguments); if (value) onCommentary(index, value); } };
       const receive = (output: number, content: number, value: string, delta = false) => {
         const key = `${output}:${content}`, previous = blocks.get(key) ?? "";
         const next = delta ? previous + value : value;
@@ -91,6 +94,11 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
       };
       progress("模型已连接，等待内容");
       for await (const event of stream) {
+        if ((event.type === "response.output_item.added" || event.type === "response.output_item.done") && event.item.type === "function_call") { functions.set(event.output_index, event.item); publicUpdate(event.output_index, event.item); }
+        if (event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") {
+          const item = functions.get(event.output_index);
+          if (item) { item.arguments = event.type.endsWith(".delta") ? item.arguments + (event as { delta: string }).delta : (event as { arguments: string }).arguments; if (item.arguments.length > 20000) throw new AgentError("工具参数过长。"); publicUpdate(event.output_index, item); }
+        }
         if (event.type.startsWith("response.reasoning")) progress("模型正在处理问题");
         if (event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") progress("模型正在准备工具调用");
         if (event.type === "response.output_item.added" && event.item.type === "function_call") progress("模型正在准备工具调用");
@@ -107,7 +115,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
         if (event.type === "response.completed") {
           const response = event.response;
           if (response.status !== "completed") throw new AgentError("模型响应未完成。");
-          response.output.forEach(receiveItem);
+          response.output.forEach((item, index) => { if (item.type === "function_call") publicUpdate(index, item); else receiveItem(item, index); });
           final = { text, calls: response.output.flatMap((item) => item.type === "function_call" ? [{ id: item.call_id, name: item.name, arguments: item.arguments }] : []),
             output: response.output.map((item): ResponseInputItem => {
               if (item.type === "message" || item.type === "function_call" || item.type === "reasoning") return item;
@@ -147,6 +155,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
         if (call.function?.arguments) pending.arguments += call.function.arguments;
         if (pending.arguments.length > 20000) throw new AgentError("工具参数过长。");
         calls.set(call.index, pending);
+        if (pending.name === "report_progress") { const value = partialCommentary(pending.arguments); if (value) onCommentary(call.index, value); }
       }
     }
     if (!finish) throw new AgentError("响应流提前断开，已保留收到的内容，请重试。");

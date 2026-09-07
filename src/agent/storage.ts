@@ -49,7 +49,7 @@ export async function listConversations(accountId: string): Promise<Conversation
     const rows = await db.getAllFromIndex("conversations", "account", accountId);
     return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((row) => ({ ...row,
       messages: row.messages.map((message) => message.status === "running"
-        ? { ...message, status: "stopped" as const, error: "上次生成已中断，可以重试。" } : message),
+        ? { ...message, status: "stopped" as const, error: "上次生成已中断，可以重试。", activity: message.activity?.map(item => ({ ...item, ...(item.status === "running" ? { status: "stopped" as const } : {}), reading: item.reading?.map(read => read.status === "queued" || read.status === "reading" ? { ...read, status: "skipped" as const, detail: "上次生成已中断，未完成读取" } : read) ?? [] })) ?? [], reading: message.reading?.map(item => item.status === "queued" || item.status === "reading" ? { ...item, status: "skipped" as const, detail: "上次生成已中断，未完成读取" } : item) ?? [] } : message),
     }));
   } finally { db.close(); }
 }

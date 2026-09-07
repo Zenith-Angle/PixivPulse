@@ -52,3 +52,19 @@ it("reuses an existing page without a network request or disturbing the user's t
   await readNovelSample(data, { workKey: work.key, focus: "opening", keyword: "", refresh: true }, new AbortController().signal, false);
   expect(fetch).not.toHaveBeenCalled(); expect(tabs.create).not.toHaveBeenCalled(); expect(tabs.remove).not.toHaveBeenCalled();
 });
+
+it("honors larger explicit sampling budgets without a hidden 6000-character or 70-percent cap", () => {
+  const result = sampleNovelText("正文".repeat(15000), "balanced", "", { maxChars: 24000, fraction: 0.9 });
+  expect(result.sampledCharacters).toBe(24000); expect(result.coverage).toBe(0.8);
+  const full = sampleNovelText("短篇正文".repeat(300), "balanced", "", { maxChars: 5000, fraction: 1 });
+  expect(full.coverage).toBe(1);
+  expect(() => sampleNovelText("文".repeat(1000), "balanced", "", { maxChars: Infinity, fraction: 1 })).toThrow();
+});
+
+it("uses direct reading when an older open page rejects newly supported sampling parameters", async () => {
+  const data = createDemoData(), work = data.works.find(work => work.type === "novel")!;
+  vi.stubGlobal("chrome", { runtime: { id: "test-extension" }, tabs: { query: vi.fn().mockResolvedValue([{ id: 8, url: `https://www.pixiv.net/novel/show.php?id=${work.id}` }]), sendMessage: vi.fn().mockResolvedValue({ error: "采样参数无效。" }) } });
+  const fetch = vi.spyOn(pageReader, "readNovelDetail").mockResolvedValue(pageReader.sampleNovelDetail({ error: false, body: { id: work.id, content: "正文".repeat(5000) } }, work.id, "balanced", "", { maxChars: 9000, fraction: 1 }));
+  await readNovelSample(data, { workKey: work.key, focus: "balanced", keyword: "", refresh: true }, new AbortController().signal, false, { maxChars: 9000, fraction: 1 });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

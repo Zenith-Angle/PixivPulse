@@ -14,6 +14,49 @@ const hooks = () => ({ onText: vi.fn(), onTrace: vi.fn(), onBudget: vi.fn(), onU
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("Agent protocol and execution acceptance", () => {
+  it.each(["responses", "chat"] as const)("streams public commentary independently of final text with %s", async protocol => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ start(value) { controller = value; } }), { headers: { "content-type": "text/event-stream" } })));
+    const onText = vi.fn(), onCommentary = vi.fn();
+    const running = generateTurn({ ...config, protocol }, "test", [], [user], [], new AbortController().signal, onText, undefined, onCommentary);
+    const emit = (event: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+    if (protocol === "responses") {
+      emit({ type: "response.output_item.added", output_index: 0, item: { type: "function_call", name: "report_progress", arguments: "" } });
+      emit({ type: "response.function_call_arguments.delta", output_index: 0, delta: '{"message":"先核对' });
+    } else emit({ choices: [{ delta: { tool_calls: [{ index: 0, id: "c", type: "function", function: { name: "report_progress", arguments: '{"message":"先核对' } }] } }] });
+    await vi.waitFor(() => expect(onCommentary).toHaveBeenCalledWith(0, "先核对"));
+    expect(onText).not.toHaveBeenCalled();
+    if (protocol === "responses") {
+      emit({ type: "response.function_call_arguments.delta", output_index: 0, delta: '证据。"}' });
+      emit(response([{ type: "function_call", id: "f", call_id: "c", name: "report_progress", arguments: '{"message":"先核对证据。"}' }]));
+    } else emit({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '证据。"}' } }] }, finish_reason: "tool_calls" }] });
+    controller.close(); await running;
+    expect(onCommentary).toHaveBeenLastCalledWith(0, "先核对证据。");
+    expect(onText).not.toHaveBeenCalled();
+  });
+  it("separates public updates, real operations and final answers for general metric queries", async () => {
+    const call = { type: "function_call", id: "p", call_id: "p", name: "report_progress", arguments: '{"message":"先核对可用指标，再比较差异。"}' };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(sse([response([call, { type: "function_call", id: "q", call_id: "q", name: "get_overview", arguments: "{}" }])])).mockResolvedValueOnce(sse([response([message("最终结论 [S2]")])])));
+    const events = { ...hooks(), onCommentary: vi.fn(), onOperation: vi.fn() };
+    await runAgent({ ...config, analysisFocus: "metrics" }, [user], createDemoData(), false, new AbortController().signal, events);
+    expect(events.onCommentary).toHaveBeenCalledWith("0:0", "先核对可用指标，再比较差异。");
+    expect(events.onTrace.mock.calls.every(([trace]) => trace.name !== "report_progress")).toBe(true);
+    expect(events.onOperation.mock.calls.at(-1)?.[0]).toMatchObject({ kind: "operation", status: "complete" });
+    expect(events.onText.mock.calls.flat().join("")).toBe("最终结论 [S2]");
+  });
+  it("answers simple questions directly and does not force commentary or extra requests", async () => {
+    const fetch = vi.fn().mockResolvedValue(sse([response([message("你好！")])])); vi.stubGlobal("fetch", fetch);
+    const events = { ...hooks(), onCommentary: vi.fn(), onOperation: vi.fn() };
+    await runAgent({ ...config, shareData: false }, [user], createDemoData(), false, new AbortController().signal, events);
+    expect(fetch).toHaveBeenCalledTimes(1); expect(events.onCommentary).not.toHaveBeenCalled(); expect(events.onOperation).not.toHaveBeenCalled();
+  });
+  it("keeps an answer accompanying only commentary without another model request", async () => {
+    const fetch = vi.fn().mockResolvedValue(sse([response([{ type: "function_call", id: "p", call_id: "p", name: "report_progress", arguments: '{"message":"下面按两个方面说明。"}' }, message("完整回答")])])); vi.stubGlobal("fetch", fetch);
+    const events = { ...hooks(), onToolTurn: vi.fn() };
+    await runAgent({ ...config, shareData: false }, [user], createDemoData(), false, new AbortController().signal, events);
+    expect(fetch).toHaveBeenCalledTimes(1); expect(events.onToolTurn).not.toHaveBeenCalled();
+    expect(events.onText.mock.calls.flat().join("")).toBe("完整回答");
+  });
   it("reports reasoning activity and streams answer deltas before completion", async () => {
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     const stream = new ReadableStream<Uint8Array>({ start(value) { controller = value; } });
@@ -58,6 +101,38 @@ describe("Agent protocol and execution acceptance", () => {
     expect(stages.some(stage => stage.startsWith("复用正文片段：《样本乙》"))).toBe(true);
     expect(stages).toContain("结合已获取的证据组织回答");
   });
+  it("accepts eight requested original samples with live per-work progress and no three-read ceiling", async () => {
+    const data = createDemoData(), work = data.works.find(row => row.type === "novel")!;
+    data.works = Array.from({ length: 8 }, (_, i) => ({ ...work, key: `sample-${i}`, id: String(100 + i), title: `样本 ${i + 1}` }));
+    const read = vi.spyOn(novel, "readNovelSample").mockResolvedValue({ cached: false, result: { sampledCharacters: 600, totalCharacters: 5000 } });
+    const fetch = vi.fn().mockResolvedValueOnce(sse([response([{ type: "function_call", id: "f", call_id: "c", name: "read_content_samples", arguments: JSON.stringify({ workKeys: data.works.map(w => w.key), refresh: false }) }])])).mockResolvedValueOnce(sse([response([message("有限样本的特点与小规模试验 [S1]")])]));
+    vi.stubGlobal("fetch", fetch);
+    const events = { ...hooks(), onReading: vi.fn() };
+    await runAgent({ ...config, sampleOriginals: true }, [{ ...user, content: "根据 5-8 篇正文采样，列出可保留的创作特点与新方向" }], data, false, new AbortController().signal, events);
+    expect(read).toHaveBeenCalledTimes(8);
+    expect(events.onReading.mock.calls.filter(([event]) => event.status === "complete")).toHaveLength(8);
+    expect(events.onReading.mock.calls.filter(([event]) => event.status === "queued")).toHaveLength(8);
+    const payload = JSON.parse(events.onTrace.mock.calls.at(-1)![0].result);
+    expect(payload.data.works).toHaveLength(8);
+    expect(payload.data.works.every((row: { error?: string }) => !row.error)).toBe(true);
+  });
+  it("finishes automatic tool rounds when repeated queries add no new evidence", async () => {
+    const fetch = vi.fn().mockImplementation(async (_url, init) => {
+      const request = JSON.parse(init.body);
+      return sse([response(request.tools?.length ? [{ type: "function_call", id: "f", call_id: `c${fetch.mock.calls.length}`, name: "get_overview", arguments: "{}" }] : [message("已有证据足够 [S1]")])]);
+    });
+    vi.stubGlobal("fetch", fetch);
+    await runAgent({ ...config, maxSteps: 0, inputBudget: 0, totalInputBudget: 0 }, [user], createDemoData(), false, new AbortController().signal, hooks());
+    expect(fetch.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(JSON.parse(fetch.mock.calls.at(-1)![1].body).tools).toBeUndefined();
+  });
+  it("allows tool use with an unlimited per-request budget and a finite cumulative budget", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(sse([response([{ type: "function_call", id: "f", call_id: "c", name: "get_overview", arguments: "{}" }])])).mockResolvedValueOnce(sse([response([message("已有事实 [S1]")])]));
+    vi.stubGlobal("fetch", fetch);
+    await runAgent({ ...config, inputBudget: 0, totalInputBudget: 160000 }, [user], createDemoData(), false, new AbortController().signal, hooks());
+    expect(JSON.parse(fetch.mock.calls[0]![1].body).tools.length).toBeGreaterThan(0);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it("closes tools after an original-reading failure instead of retrying another channel", async () => {
     const data = createDemoData(), work = data.works.find(work => work.type === "novel")!;
     const read = vi.spyOn(novel, "readNovelSample").mockRejectedValue(new Error("页面要求验证"));
@@ -101,7 +176,7 @@ describe("Agent protocol and execution acceptance", () => {
     const call = (focus: string) => sse([response([{ type: "function_call", id: focus, call_id: focus, name: "sample_novel", arguments: JSON.stringify({ workKey: work.key, focus, keyword: "", refresh: false }) }])]);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(call("start")).mockResolvedValueOnce(call("end")).mockResolvedValueOnce(sse([response([message("依据已读片段分析")])])));
     const events = hooks();
-    await runAgent({ ...config, sampleOriginals: true }, [{ ...user, content: "采样正文" }], data, false, new AbortController().signal, events);
+    await runAgent({ ...config, sampleOriginals: true, readingDepth: "standard" }, [{ ...user, content: "采样正文" }], data, false, new AbortController().signal, events);
     expect(read).toHaveBeenCalledTimes(1);
     expect(events.onTrace.mock.calls.at(-1)![0].result).toContain("采样额度已用完");
   });
@@ -188,13 +263,13 @@ describe("Agent protocol and execution acceptance", () => {
     expect(second.messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "c1" });
   });
 
-  it("does not expose data or tools when sharing is off", async () => {
+  it("does not expose data or data-access tools when sharing is off", async () => {
     const fetchMock = vi.fn().mockResolvedValue(sse([response([message("普通对话")])]));
     vi.stubGlobal("fetch", fetchMock);
     const data = createDemoData();
     await runAgent({ ...config, shareData: false }, [user], data, false, new AbortController().signal, hooks());
     const sent = JSON.parse(fetchMock.mock.calls[0]![1].body);
-    expect(sent.tools).toBeUndefined(); expect(sent.instructions).not.toContain("Available snapshot");
+    expect(sent.tools.map((tool: { name: string }) => tool.name)).toEqual(["report_progress"]); expect(sent.instructions).not.toContain("Available snapshot");
     expect(JSON.stringify(sent)).not.toContain(data.works[0]!.title);
   });
 
