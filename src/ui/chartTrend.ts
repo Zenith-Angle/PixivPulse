@@ -194,6 +194,12 @@ export function buildSmoothedTrend(
   if (!finiteNumber(bandwidth) || bandwidth <= 0) bandwidth = fullSpan / BANDWIDTH_DIVISOR;
   if (!finiteNumber(bandwidth) || bandwidth <= 0) return normalized.display;
 
+  // A long history must not turn a brief growth burst into weeks of gradual
+  // growth. Limit smoothing to two typical observation intervals, while the
+  // viewport still reduces it when zoomed in. Ignore duplicate timestamps.
+  const intervals = normalized.unique.slice(1).map((point, index) => point[0] - normalized.unique[index]![0]).sort((a, b) => a - b);
+  bandwidth = Math.min(bandwidth, intervals[Math.floor(intervals.length / 2)]! * 2);
+
   let lower = first;
   let upper = last;
   if (visible !== undefined) {

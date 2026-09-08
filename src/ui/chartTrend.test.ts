@@ -29,6 +29,12 @@ const secondDifferenceRoughness = (values: readonly number[]): number => {
 };
 
 describe("chart trend smoothing", () => {
+  it("preserves a short growth burst when a long history is visible", () => {
+    const points: NumericPoint[] = Array.from({ length: 1001 }, (_, x) => [x, 100 + Math.max(0, Math.min(4, x - 498)) * 25]);
+    const trend = buildSmoothedTrend(points);
+    expect(interpolate(trend, 490)).toBeLessThan(102);
+    expect(interpolate(trend, 510)).toBeGreaterThan(198);
+  });
   it("leaves fixed-window growth unchanged across viewports", () => {
     const series = [{ id: "growth", type: "line" as const, smooth: false, data: [[0, 10], [1, 30], [2, -5]] }];
     expect(buildTrendSeries({ series }, [0, 2])).toEqual(series);

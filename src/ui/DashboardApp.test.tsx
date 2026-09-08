@@ -67,7 +67,7 @@ describe("PixivPulse dashboard", () => {
 
   it("keeps empty works and no-history comparison states explicit", () => {
     const empty = createEmptyDashboardData();
-    render(<WorksView analyses={[]} compareKeys={[]} onToggleCompare={vi.fn()} onOpenWork={vi.fn()} />);
+    render(<WorksView analyses={[]} onOpenWork={vi.fn()} />);
     expect(screen.getByText("第一次同步后，作品会出现在这里")).toBeTruthy();
 
     const noHistoryAnalysis = analyzeDashboard({
@@ -136,6 +136,50 @@ describe("PixivPulse dashboard", () => {
     const checkboxes = screen.getAllByRole("checkbox");
     checkboxes.slice(0, 5).forEach((checkbox) => expect(checkbox).toBeChecked());
     expect(checkboxes[5]).toBeDisabled();
+  });
+
+  it("keeps selection in comparison and supports search, removal, and clearing", async () => {
+    vi.stubGlobal("chrome", undefined);
+    render(<DashboardApp />);
+    await screen.findAllByText("预览数据", { exact: true });
+    fireEvent.click(screen.getByRole("button", { name: /^比较/ }));
+    fireEvent.click(screen.getByRole("button", { name: "全选筛选结果" }));
+    const checked = screen.getAllByRole("checkbox").filter((item) => (item as HTMLInputElement).checked);
+    expect(checked.length).toBeGreaterThanOrEqual(2);
+    const title = checked[0]!.getAttribute("aria-label")!.replace("比较：", "");
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索比较作品" }), { target: { value: title } });
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: `移除比较：${title}` }));
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /^作品/ }));
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    expect(screen.getAllByRole("button", { name: /^查看.*增量详情$/ })).toHaveLength(createDemoData().works.length);
+    fireEvent.click(screen.getByRole("button", { name: "列表视图" }));
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /^比较/ }));
+    expect(screen.getAllByRole("checkbox").some((item) => (item as HTMLInputElement).checked)).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "清空选择" }));
+    expect(screen.getAllByRole("checkbox").every((item) => !(item as HTMLInputElement).checked)).toBe(true);
+  });
+
+  it("pairs portfolio and work totals with increments using the same metric and range", () => {
+    const data = createDemoData();
+    const analyses = analyzeDashboard(data);
+    const { unmount } = render(<OverviewView analyses={analyses} data={data} onOpenWork={vi.fn()} onGoToWorks={vi.fn()} />);
+    const portfolio = within(screen.getByTestId("portfolio-chart"));
+    expect(portfolio.getByRole("img", { name: "作品集浏览分段增量图" })).toBeTruthy();
+    fireEvent.click(portfolio.getByRole("button", { name: "收藏" }));
+    fireEvent.click(portfolio.getByRole("button", { name: "近30天" }));
+    expect(portfolio.getByRole("img", { name: "作品集收藏分段增量图" })).toBeTruthy();
+    expect(portfolio.getByText("每 1 天 · 与上方范围一致")).toBeTruthy();
+    unmount();
+    render(<DetailDrawer analysis={analyses[0]!} samples={data.samples} observations={data.observations} onClose={vi.fn()} />);
+    const growth = within(screen.getByTestId("growth-chart"));
+    fireEvent.click(growth.getByRole("button", { name: "评论" }));
+    fireEvent.click(growth.getByRole("button", { name: "近7天" }));
+    expect(growth.getByRole("img", { name: "评论绝对总数折线图" })).toBeTruthy();
+    expect(growth.getByRole("img", { name: "作品评论分段增量图" })).toBeTruthy();
+    expect(growth.getByText("每 6 小时 · 与上方范围一致")).toBeTruthy();
   });
 
   it("guards formula-like values in CSV exports", () => {
@@ -216,7 +260,7 @@ describe("PixivPulse dashboard", () => {
 
     cleanup();
     const intradayByWork = new Map(intraday.works.map((work) => [work.workKey, work] as const));
-    render(<WorksView analyses={analyses} intradayByWork={intradayByWork} compareKeys={[]} onToggleCompare={vi.fn()} onOpenWork={vi.fn()} />);
+    render(<WorksView analyses={analyses} intradayByWork={intradayByWork} onOpenWork={vi.fn()} />);
     expect(screen.getAllByText("今日浏览").length).toBeGreaterThan(0);
     expect(screen.getAllByText("今日收藏").length).toBeGreaterThan(0);
     expect(screen.getAllByText("今日赞").length).toBeGreaterThan(0);
@@ -286,13 +330,15 @@ describe("PixivPulse dashboard", () => {
     expect(viewsCard.textContent).toContain("184,630");
   });
 
-  it("replays overview numbers once when a manual-sync animation epoch changes", () => {
+  it("replays overview numbers once when a manual-sync animation epoch changes", async () => {
     const data = createDemoData();
     const props = { analyses: analyzeDashboard(data), data, onOpenWork: vi.fn(), onGoToWorks: vi.fn() };
     const { rerender } = render(<OverviewView {...props} animationSignal={0} />);
     // Midnight may have no observations today; exercise replay with an explicit rolling range.
     fireEvent.click(screen.getByRole("button", { name: "近24小时" }));
-    expect(document.querySelectorAll(".overview-view .animated-number-rolling")).toHaveLength(0);
+    // A range change can animate different deltas during the day. Let that
+    // legitimate animation finish before checking the independent sync replay.
+    await waitFor(() => expect(document.querySelectorAll(".overview-view .animated-number-rolling")).toHaveLength(0));
 
     rerender(<OverviewView {...props} animationSignal={1} />);
     expect(document.querySelectorAll(".kpi-grid .animated-number-rolling")).toHaveLength(8);
@@ -389,7 +435,7 @@ describe("PixivPulse dashboard", () => {
   it("switches between the complete grid and dense list views", () => {
     const data = createDemoData();
     const analyses = analyzeDashboard(data);
-    render(<WorksView analyses={analyses} compareKeys={[]} onToggleCompare={vi.fn()} onOpenWork={vi.fn()} />);
+    render(<WorksView analyses={analyses} onOpenWork={vi.fn()} />);
 
     expect(screen.getAllByTestId("work-card")).toHaveLength(data.works.length);
     fireEvent.click(screen.getByRole("button", { name: "列表视图" }));
@@ -411,7 +457,7 @@ describe("PixivPulse dashboard", () => {
       publishedAt: ["2026-08-20T00:00:00.000Z", "2026-08-31T00:00:00.000Z", "2026-08-25T00:00:00.000Z"][index]!,
     }));
     const analyses = analyzeDashboard(data);
-    render(<WorksView analyses={analyses} compareKeys={[]} onToggleCompare={vi.fn()} onOpenWork={vi.fn()} />);
+    render(<WorksView analyses={analyses} onOpenWork={vi.fn()} />);
 
     expect(screen.getAllByTestId("work-card").map((card) => card.querySelector(".work-card-title")?.textContent)).toEqual([
       "发布时间作品 2",
@@ -422,7 +468,7 @@ describe("PixivPulse dashboard", () => {
 
   it("exposes shared sort controls and sortable list columns", () => {
     const analyses = analyzeDashboard(createDemoData());
-    const { container } = render(<WorksView analyses={analyses} compareKeys={[]} onToggleCompare={vi.fn()} onOpenWork={vi.fn()} />);
+    const { container } = render(<WorksView analyses={analyses} onOpenWork={vi.fn()} />);
 
     expect(screen.getByRole("combobox", { name: "排序指标" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "切换为升序" })).toBeTruthy();
@@ -437,7 +483,7 @@ describe("PixivPulse dashboard", () => {
     const table = screen.getByRole("table", { name: "PixivPulse 作品增长表" });
     expect(within(table).getAllByRole("columnheader")).toHaveLength(15);
     expect(within(table).getAllByRole("row")[1]?.querySelectorAll("td")).toHaveLength(15);
-    expect(within(table).getAllByRole("checkbox")[0]?.closest("td")).toHaveClass("work-name-cell");
+    expect(within(table).queryAllByRole("checkbox")).toHaveLength(0);
     expect(within(table).getAllByText(/\d+\.\d+ 天前/).length).toBeGreaterThan(0);
     expect(container.querySelectorAll(".sort-indicator")).toHaveLength(9);
 
@@ -465,7 +511,7 @@ describe("PixivPulse dashboard", () => {
       seriesTitle: index % 2 === 0 ? "测试系列" : null,
     }));
     const analyses = analyzeDashboard({ ...createEmptyDashboardData(), works });
-    render(<WorksView analyses={analyses} compareKeys={[]} onToggleCompare={vi.fn()} onOpenWork={vi.fn()} />);
+    render(<WorksView analyses={analyses} onOpenWork={vi.fn()} />);
 
     expect(screen.getAllByTestId("work-card")).toHaveLength(34);
     expect(screen.getAllByText("测试系列").length).toBeGreaterThan(0);
@@ -476,7 +522,7 @@ describe("PixivPulse dashboard", () => {
 
   it("keeps a card visible with a placeholder when its CDN cover fails", () => {
     const analysis = analyzeDashboard(createDemoData())[0]!;
-    render(<WorksView analyses={[analysis]} compareKeys={[]} onToggleCompare={vi.fn()} onOpenWork={vi.fn()} />);
+    render(<WorksView analyses={[analysis]} onOpenWork={vi.fn()} />);
     const cover = screen.getByRole("img", { name: `${analysis.work.title} 封面` });
     fireEvent.error(cover);
 

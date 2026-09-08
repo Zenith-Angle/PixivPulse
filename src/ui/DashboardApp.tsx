@@ -95,6 +95,7 @@ import {
   triggerDownload,
 } from "./helpers";
 import { EChartsHost } from "./EChartsHost";
+import { IncrementChart, IncrementPreview } from "./IncrementChart";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { StorageCenter, type StorageCenterModel } from "./StorageCenter";
 import { ImportPreviewModal } from "./ImportPreviewModal";
@@ -405,37 +406,6 @@ function ConfidenceBadge({ confidence }: { confidence: WorkAnalysis["confidence"
   return <span className={cn("confidence-badge", tone)}>{confidenceLabel(confidence)}</span>;
 }
 
-function Sparkline({ analysis }: { analysis: WorkAnalysis }) {
-  const pointsWithTime = analysis.sparkline.flatMap((point) => {
-    const timestamp = Date.parse(point.at);
-    return point.views === null || !Number.isFinite(timestamp) ? [] : [{ timestamp, value: point.views }];
-  }).sort((left, right) => left.timestamp - right.timestamp);
-  if (pointsWithTime.length < 2) return <span className="sparkline-empty">—</span>;
-  const width = 84;
-  const height = 30;
-  const values = pointsWithTime.map((point) => point.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const firstAt = pointsWithTime[0]?.timestamp ?? 0;
-  const lastAt = pointsWithTime.at(-1)?.timestamp ?? firstAt;
-  const elapsed = Math.max(1, lastAt - firstAt);
-  const points = pointsWithTime.map(({ timestamp, value }) => {
-    const x = ((timestamp - firstAt) / elapsed) * (width - 4) + 2;
-    const y = height - 3 - ((value - min) / range) * (height - 8);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  const first = values[0] ?? null;
-  const last = values.at(-1) ?? null;
-  const label = `浏览绝对值 ${formatCount(first)} 到 ${formatCount(last)}`;
-  return (
-    <svg className="sparkline" width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}>
-      <title>{label}，横轴按真实采样时间间隔</title>
-      <polyline points={points.join(" ")} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function EmptyState({ icon, title, body, action }: { icon?: ReactNode; title: string; body: string; action?: ReactNode }) {
   return (
     <div className="empty-state" role="status">
@@ -485,7 +455,7 @@ function Sidebar({ activeTab, onChange, onOpenOnboarding }: { activeTab: Dashboa
       <div className="sidebar-bottom">
         <div className="local-badge"><span className="status-dot" />数据保存在本机</div>
         <button type="button" className="help-link" onClick={onOpenOnboarding} title="重新查看首次使用说明"><Info size={15} aria-hidden="true" />使用说明</button>
-        <p className="version-label">PixivPulse 0.5.10 · 本地优先</p>
+        <p className="version-label">PixivPulse 0.5.11 · 本地优先</p>
       </div>
     </aside>
   );
@@ -718,6 +688,8 @@ function PortfolioChart({ timeline, rangeValue, onRangeChange, pending = false }
   const option = useMemo(() => buildPortfolioChartOption({ points, metric }), [metric, points]);
   const label = DASHBOARD_CHART_METRIC_LABELS[metric];
   const latest = validPoints.at(-1)?.value ?? null;
+  const incrementPoints = useMemo(() => timeline.map((point) => ({ at: point.at, value: point.metrics[metric], runId: point.runId })), [timeline, metric]);
+  const range = useMemo(() => resolvedRange(rangeValue), [rangeValue]);
   return (
     <div className={cn("chart-panel", pending && "range-pending")} data-testid="portfolio-chart" aria-busy={pending}>
       <div className="chart-control-row"><MetricSelector value={metric} onChange={setMetric} label="作品集图表指标" /><ChartRangeControl value={rangeValue} onChange={onRangeChange} ariaLabel="作品集图表时间范围" presetOrder={OVERVIEW_RANGE_PRESET_ORDER} /></div>
@@ -728,6 +700,7 @@ function PortfolioChart({ timeline, rangeValue, onRangeChange, pending = false }
         emptyMessage="所选时间范围内还没有有效采样。"
         summary={`${label}共 ${formatCount(validPoints.length)} 个有效采样点${latest === null ? "" : `，最近为 ${formatCount(latest)}`}。`}
       />
+      {range && <IncrementChart points={incrementPoints} metric={metric} range={range} name="作品集" />}
     </div>
   );
 }
@@ -964,7 +937,14 @@ const statusLabel = (_analysis: WorkAnalysis, intraday: IntradayWorkAnalysis | n
   return `今日有增长 · 浏览 ${formatDelta(delta)}`;
 };
 
-function WorkRow({ analysis, intraday, onOpen, checked, compareDisabled, onToggleCompare }: { analysis: WorkAnalysis; intraday: IntradayWorkAnalysis | null; onOpen: () => void; checked: boolean; compareDisabled: boolean; onToggleCompare: () => void }) {
+function WorkIncrementPreview({ analysis, intraday, range, onOpen }: { analysis: WorkAnalysis; intraday: IntradayWorkAnalysis | null; range: ChartTimeRange; onOpen: () => void }) {
+  const points = useMemo(() => intraday
+    ? intraday.points.map((point) => ({ at: point.observedAt, value: point.metrics.views, runId: point.runId }))
+    : analysis.sparkline.map((point) => ({ at: point.at, value: point.views })), [analysis.sparkline, intraday]);
+  return <IncrementPreview points={points} range={range} name={analysis.work.title} onOpen={onOpen} />;
+}
+
+function WorkRow({ analysis, intraday, onOpen, previewRange }: { analysis: WorkAnalysis; intraday: IntradayWorkAnalysis | null; onOpen: () => void; previewRange: ChartTimeRange }) {
   const metrics = currentMetrics(analysis);
   const delta = analysis.lastDelta.views.value;
   const contentType = contentTypeForWork(analysis.work);
@@ -972,7 +952,7 @@ function WorkRow({ analysis, intraday, onOpen, checked, compareDisabled, onToggl
   return (
     <tr>
       <td className="rank-cell">{ranking ? `#${ranking.rank}` : "—"}<small>{ranking ? "当前排名" : "排名未知"}</small></td>
-      <td className="work-name-cell"><div className="work-name-layout"><input type="checkbox" checked={checked} disabled={compareDisabled} onChange={onToggleCompare} aria-label={`加入比较：${analysis.work.title}`} /><button type="button" className="work-link" onClick={onOpen}><Thumbnail work={analysis.work} /><span><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentType)} · {analysis.work.id}</small><small className="work-series-inline">{workSeries(analysis.work)}</small></span></button></div></td>
+      <td className="work-name-cell"><div className="work-name-layout"><button type="button" className="work-link" onClick={onOpen}><Thumbnail work={analysis.work} /><span><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentType)} · {analysis.work.id}</small><small className="work-series-inline">{workSeries(analysis.work)}</small></span></button></div></td>
       <td className="number-cell"><AnimatedNumber value={formatCount(metrics.views)} /></td>
       <TodayDeltaCell intraday={intraday} metricKey="views" />
       <TodayDeltaCell intraday={intraday} metricKey="bookmarks" />
@@ -983,7 +963,7 @@ function WorkRow({ analysis, intraday, onOpen, checked, compareDisabled, onToggl
       <td className="number-cell recent-seen-cell"><span>{formatTimestamp(analysis.work.lastSeenAt)}</span><small>最近观察</small></td>
       <td className="number-cell total-cell"><AnimatedNumber value={formatCount(metrics.likes)} /></td>
       <td className="number-cell total-cell"><AnimatedNumber value={formatCount(metrics.bookmarks)} /><small className="ratio-label">{formatPercent(analysis.bookmarkRate)}</small></td>
-      <td className="sparkline-cell"><Sparkline analysis={analysis} /></td>
+      <td className="sparkline-cell"><WorkIncrementPreview analysis={analysis} intraday={intraday} range={previewRange} onOpen={onOpen} /></td>
       <td className="confidence-cell"><ConfidenceBadge confidence={analysis.confidence} /></td>
       <td><IconButton label={`打开${analysis.work.title}详情`} className="row-action" onClick={onOpen}><ChevronRight size={17} /></IconButton></td>
     </tr>
@@ -994,7 +974,7 @@ function WorkMetric({ icon, label, value }: { icon: ReactNode; label: string; va
   return <span className="work-metric"><span className="work-metric-label">{icon}{label}</span><strong><AnimatedNumber value={formatCount(value)} /></strong></span>;
 }
 
-function WorkCard({ analysis, intraday, checked, compareDisabled, onToggleCompare, onOpen, coverRevision, coverRefreshSignal }: { analysis: WorkAnalysis; intraday: IntradayWorkAnalysis | null; checked: boolean; compareDisabled: boolean; onToggleCompare: () => void; onOpen: () => void; coverRevision: string; coverRefreshSignal: string }) {
+function WorkCard({ analysis, intraday, previewRange, onOpen, coverRevision, coverRefreshSignal }: { analysis: WorkAnalysis; intraday: IntradayWorkAnalysis | null; previewRange: ChartTimeRange; onOpen: () => void; coverRevision: string; coverRefreshSignal: string }) {
   const metrics = currentMetrics(analysis);
   const contentType = contentTypeForWork(analysis.work);
   const description = workDescription(analysis.work);
@@ -1007,7 +987,6 @@ function WorkCard({ analysis, intraday, checked, compareDisabled, onToggleCompar
           <Thumbnail work={analysis.work} className="work-cover" cacheRevision={coverRevision} cacheRefreshSignal={coverRefreshSignal} />
         </button>
         {ranking && <span className="rank-badge" aria-label={`当前排名第 ${ranking.rank} 名`}>#{ranking.rank}</span>}
-        <label className={cn("work-compare-control", compareDisabled && "disabled")}><input type="checkbox" checked={checked} disabled={compareDisabled} onChange={onToggleCompare} aria-label={`加入比较：${analysis.work.title}`} /><span>比较</span></label>
       </div>
       <div className="work-card-body">
         <div className="work-card-heading">
@@ -1023,18 +1002,21 @@ function WorkCard({ analysis, intraday, checked, compareDisabled, onToggleCompar
           <WorkMetric icon={<MessageCircle size={13} aria-hidden="true" />} label="评论" value={metrics.comments} />
         </div>
         <div className="work-today-stats" aria-label={`${analysis.work.title}今日变化`}><span title="今日浏览" aria-label="今日浏览"><strong className={cn(todayViews !== null && todayViews > 0 && "positive", todayViews !== null && todayViews < 0 && "negative")}><AnimatedNumber value={todayViews === null ? "—" : formatDelta(todayViews)} /></strong></span><span title="今日收藏" aria-label="今日收藏"><strong><AnimatedNumber value={formatDelta(todayDelta(intraday, "bookmarks"))} /></strong></span><span title="今日赞" aria-label="今日赞"><strong><AnimatedNumber value={formatDelta(todayDelta(intraday, "likes"))} /></strong></span><span title="今日评论" aria-label="今日评论"><strong><AnimatedNumber value={formatDelta(todayDelta(intraday, "comments"))} /></strong></span></div>
+        <WorkIncrementPreview analysis={analysis} intraday={intraday} range={previewRange} onOpen={onOpen} />
         <div className="work-card-footer"><span className="work-baseline-label">{statusLabel(analysis, intraday)}</span><span className="work-sample-note" aria-label="今日样本">今日样本 {intraday ? formatCount(intraday.sampleCount) : "—"}</span><button type="button" className="work-detail-button" onClick={onOpen}>查看详情 <ChevronRight size={14} aria-hidden="true" /></button></div>
       </div>
     </article>
   );
 }
 
-export function WorksView({ analyses, intradayByWork, compareKeys, onToggleCompare, onOpenWork, completedRunWorks, coverCache }: { analyses: WorkAnalysis[]; intradayByWork?: ReadonlyMap<string, IntradayWorkAnalysis>; compareKeys: string[]; onToggleCompare: (key: string) => void; onOpenWork: (key: string) => void; completedRunWorks?: number | null; coverCache?: CoverCacheSummary | undefined }) {
+export function WorksView({ analyses, intradayByWork, onOpenWork, completedRunWorks, coverCache }: { analyses: WorkAnalysis[]; intradayByWork?: ReadonlyMap<string, IntradayWorkAnalysis>; onOpenWork: (key: string) => void; completedRunWorks?: number | null; coverCache?: CoverCacheSummary | undefined }) {
   const [query, setQuery] = useState("");
   const [type, setType] = useState<WorkTypeFilter>("all");
   const [status, setStatus] = useState<WorkStatusFilter>("all");
   const [sort, setSort] = useState<WorkSort>(DEFAULT_WORK_SORT);
   const [viewMode, setViewMode] = useState<WorksViewMode>(readWorksViewMode);
+  const dateRevision = useBeijingDateRevision();
+  const previewRange = useMemo(() => resolveChartTimeRange({ preset: "today" })!, [analyses, dateRevision]);
   const coverRefreshSignal = coverRefreshSignalFor(coverCache);
   useEffect(() => { saveWorksViewMode(viewMode); }, [viewMode]);
   const filtered = useMemo(() => {
@@ -1057,7 +1039,7 @@ export function WorksView({ analyses, intradayByWork, compareKeys, onToggleCompa
   return (
     <div className="view-stack works-view">
       <section className="list-toolbar">
-        <div><p className="eyebrow">WORK LIBRARY</p><h2>全部作品 <span>{formatCount(filtered.length)} / {formatCount(analyses.length)}</span></h2><p className="toolbar-caption">勾选作品后可加入比较；点击作品名查看采样细节。</p></div>
+        <div><p className="eyebrow">WORK LIBRARY</p><h2>全部作品 <span>{formatCount(filtered.length)} / {formatCount(analyses.length)}</span></h2><p className="toolbar-caption">点击作品查看总量与增量；多作品对照请前往比较页。</p></div>
         <div className="toolbar-controls">
           <label className="search-field"><Search size={16} aria-hidden="true" /><span className="sr-only">搜索作品</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="搜索标题或 ID" /></label>
           <label className="select-field"><ListFilter size={15} aria-hidden="true" /><span className="sr-only">作品类型</span><select value={type} onChange={(event) => setType(event.currentTarget.value as WorkTypeFilter)}><option value="all">全部类型</option><option value="novel">小说</option><option value="illustration">插画</option><option value="manga">漫画</option><option value="ugoira">动图</option><option value="unknown">作品</option></select></label>
@@ -1068,7 +1050,7 @@ export function WorksView({ analyses, intradayByWork, compareKeys, onToggleCompa
         </div>
       </section>
       <div className="table-summary"><span><ImageIcon size={15} aria-hidden="true" />{analyses.length} 件作品</span><span><Activity size={15} aria-hidden="true" />{analyses.filter((analysis) => analysis.previousSample).length} 件已有历史</span>{coverCache && coverCache.total > 0 && <span title={coverCache.failed > 0 ? `${coverCache.failed} 张失败，将在下次完整同步重试` : undefined}><Database size={15} aria-hidden="true" />本地封面 {coverCache.ready}/{coverCache.total}{coverCache.pending > 0 ? ` · ${coverCache.pending} 张处理中` : ""}{coverCache.skipped > 0 ? ` · ${coverCache.skipped} 张空间不足` : ""}</span>}<span className="summary-tip"><SlidersHorizontal size={14} aria-hidden="true" />变化值只使用相邻真实采样</span></div>
-       {filtered.length === 0 ? <EmptyState icon={<Search size={22} />} title={analyses.length ? "没有匹配的作品" : completedRunWorks === 0 ? "最近同步没有作品" : "第一次同步后，作品会出现在这里"} body={analyses.length ? "试试清空搜索词或调整筛选条件。" : completedRunWorks === 0 ? "最近一次同步已完成，Pixiv 返回 0 件作品；下一次同步会继续读取。" : completedRunWorks === null || completedRunWorks === undefined ? "尚未完成第一次同步；完成同步后，真实作品会出现在这里。" : `最近一次同步已完成，Pixiv 返回 ${formatCount(completedRunWorks)} 件作品；当前列表暂时没有可展示的记录。`} /> : viewMode === "grid" ? <><div className="grid-metrics-legend" aria-label="今日数据字段"><span>今日浏览</span><span>今日收藏</span><span>今日赞</span><span>今日评论</span><span>今日样本</span></div><div className="works-grid">{filtered.map((analysis) => { const checked = compareKeys.includes(analysis.work.key); return <WorkCard key={analysis.work.key} analysis={analysis} intraday={intradayByWork?.get(analysis.work.key) ?? null} onOpen={() => onOpenWork(analysis.work.key)} checked={checked} compareDisabled={!checked && compareKeys.length >= MAX_COMPARE_WORKS} onToggleCompare={() => onToggleCompare(analysis.work.key)} coverRevision={coverRevisionForWork(analysis.work)} coverRefreshSignal={coverRefreshSignal} />; })}</div></> : <div className="table-scroll"><table className="works-table"><caption className="sr-only">PixivPulse 作品增长表</caption><thead><tr><th className="number-heading">排名</th><th><SortButton label="作品" sortKey="title" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="浏览" sortKey="views" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="今日浏览" sortKey="todayViews" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="今日收藏" sortKey="todayBookmarks" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="今日赞" sortKey="todayLikes" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="今日评论" sortKey="todayComments" sort={sort} onSort={onSort} /></th><th className="number-heading">今日样本</th><th className="number-heading">上次变化</th><th className="number-heading"><SortButton label="最近观察" sortKey="lastSeenAt" sort={sort} onSort={onSort} /></th><th className="number-heading total-heading"><SortButton label="赞总量" sortKey="likes" sort={sort} onSort={onSort} /></th><th className="number-heading total-heading"><SortButton label="收藏总量" sortKey="bookmarks" sort={sort} onSort={onSort} /></th><th>走势</th><th>置信</th><th aria-label="操作" /></tr></thead><tbody>{filtered.map((analysis) => { const checked = compareKeys.includes(analysis.work.key); return <WorkRow key={analysis.work.key} analysis={analysis} intraday={intradayByWork?.get(analysis.work.key) ?? null} onOpen={() => onOpenWork(analysis.work.key)} checked={checked} compareDisabled={!checked && compareKeys.length >= MAX_COMPARE_WORKS} onToggleCompare={() => onToggleCompare(analysis.work.key)} />; })}</tbody></table></div>}
+       {filtered.length === 0 ? <EmptyState icon={<Search size={22} />} title={analyses.length ? "没有匹配的作品" : completedRunWorks === 0 ? "最近同步没有作品" : "第一次同步后，作品会出现在这里"} body={analyses.length ? "试试清空搜索词或调整筛选条件。" : completedRunWorks === 0 ? "最近一次同步已完成，Pixiv 返回 0 件作品；下一次同步会继续读取。" : completedRunWorks === null || completedRunWorks === undefined ? "尚未完成第一次同步；完成同步后，真实作品会出现在这里。" : `最近一次同步已完成，Pixiv 返回 ${formatCount(completedRunWorks)} 件作品；当前列表暂时没有可展示的记录。`} /> : viewMode === "grid" ? <><div className="grid-metrics-legend" aria-label="今日数据字段"><span>今日浏览</span><span>今日收藏</span><span>今日赞</span><span>今日评论</span><span>今日样本</span></div><div className="works-grid">{filtered.map((analysis) => { return <WorkCard key={analysis.work.key} analysis={analysis} intraday={intradayByWork?.get(analysis.work.key) ?? null} onOpen={() => onOpenWork(analysis.work.key)} previewRange={previewRange} coverRevision={coverRevisionForWork(analysis.work)} coverRefreshSignal={coverRefreshSignal} />; })}</div></> : <div className="table-scroll"><table className="works-table"><caption className="sr-only">PixivPulse 作品增长表</caption><thead><tr><th className="number-heading">排名</th><th><SortButton label="作品" sortKey="title" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="浏览" sortKey="views" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="今日浏览" sortKey="todayViews" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="今日收藏" sortKey="todayBookmarks" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="今日赞" sortKey="todayLikes" sort={sort} onSort={onSort} /></th><th className="number-heading"><SortButton label="今日评论" sortKey="todayComments" sort={sort} onSort={onSort} /></th><th className="number-heading">今日样本</th><th className="number-heading">上次变化</th><th className="number-heading"><SortButton label="最近观察" sortKey="lastSeenAt" sort={sort} onSort={onSort} /></th><th className="number-heading total-heading"><SortButton label="赞总量" sortKey="likes" sort={sort} onSort={onSort} /></th><th className="number-heading total-heading"><SortButton label="收藏总量" sortKey="bookmarks" sort={sort} onSort={onSort} /></th><th>今日浏览增量</th><th>置信</th><th aria-label="操作" /></tr></thead><tbody>{filtered.map((analysis) => { return <WorkRow key={analysis.work.key} analysis={analysis} intraday={intradayByWork?.get(analysis.work.key) ?? null} onOpen={() => onOpenWork(analysis.work.key)} previewRange={previewRange} />; })}</tbody></table></div>}
     </div>
   );
 }
@@ -1124,8 +1106,18 @@ export function CompareView({ analyses, compareKeys, onToggleCompare, onOpenWork
   const [rangeValue, setRangeValue] = useState<ChartRangeControlValue>(DEFAULT_CHART_RANGE);
   const [metric, setMetric] = useState<DashboardChartMetric>("views");
   const [valueMode, setValueMode] = useState<CompareValueMode>("total");
+  const [query, setQuery] = useState("");
+  const [type, setType] = useState<WorkTypeFilter>("all");
+  const [onlySelected, setOnlySelected] = useState(false);
   const range = useMemo(() => resolvedRange(rangeValue), [rangeValue]);
   const selected = compareKeys.slice(0, MAX_COMPARE_WORKS).map((key) => analyses.find((analysis) => analysis.work.key === key)).filter((analysis): analysis is WorkAnalysis => Boolean(analysis));
+  const candidates = analyses.filter((analysis) => {
+    const text = `${analysis.work.title} ${analysis.work.id} ${workSeries(analysis.work)}`.toLocaleLowerCase();
+    return text.includes(query.trim().toLocaleLowerCase()) && (type === "all" || contentTypeForWork(analysis.work) === type)
+      && (!onlySelected || compareKeys.includes(analysis.work.key));
+  });
+  const available = candidates.filter((analysis) => !compareKeys.includes(analysis.work.key));
+  const quickAdd = available.slice(0, MAX_COMPARE_WORKS - selected.length);
   const series = selected.map((analysis, index) => {
     const timeline = data && range ? buildWorkTimeline(analysis.work.key, data.samples, data.observations, valueMode === "delta" ? { startMs: null, endMs: range.endMs } : range, data.observationBatches) : analysis.sparkline.map((point, sequence) => ({ workKey: analysis.work.key, at: point.at, runId: `legacy-${sequence}`, metrics: { views: point.views, likes: point.likes, bookmarks: point.bookmarks, comments: null, rank: null, responses: null, illustrations: null } }));
     return {
@@ -1137,10 +1129,20 @@ export function CompareView({ analyses, compareKeys, onToggleCompare, onOpenWork
   return (
     <div className="view-stack compare-view">
       <section className="list-toolbar compare-toolbar"><div><p className="eyebrow">ABSOLUTE COMPARISON</p><h2>比较作品 <span>{selected.length} / {MAX_COMPARE_WORKS}</span></h2><p className="toolbar-caption">2 至 {MAX_COMPARE_WORKS} 部作品使用同一真实时间轴，比较浏览、收藏和获赞的总量或增量。</p></div><div className="compare-help"><Gauge size={17} aria-hidden="true" /><span>最多选择 {MAX_COMPARE_WORKS} 件作品</span></div></section>
-      <section className="compare-picker" aria-label="选择比较作品">
-        {analyses.length === 0 ? <p className="muted-copy">同步后可从作品列表选择比较对象。</p> : analyses.map((analysis) => { const checked = compareKeys.includes(analysis.work.key); const disabled = !checked && selected.length >= MAX_COMPARE_WORKS; return <label key={analysis.work.key} className={cn("picker-item", checked && "selected", disabled && "disabled")}><input type="checkbox" checked={checked} disabled={disabled} onChange={() => onToggleCompare(analysis.work.key)} /><Thumbnail work={analysis.work} /><span><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentTypeForWork(analysis.work))} · {workConfidence(analysis)}</small></span></label>; })}
+      <section className="compare-selection" aria-label="比较对象管理">
+        <div className="compare-selection-controls">
+          <label className="search-field"><Search size={16} aria-hidden="true" /><span className="sr-only">搜索比较作品</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="搜索标题、ID 或系列" /></label>
+          <label className="select-field"><span className="sr-only">比较作品类型</span><select value={type} onChange={(event) => setType(event.currentTarget.value as WorkTypeFilter)}><option value="all">全部类型</option><option value="novel">小说</option><option value="illustration">插画</option><option value="manga">漫画</option><option value="ugoira">动图</option><option value="unknown">作品</option></select></label>
+          <button type="button" className="text-button" aria-pressed={onlySelected} onClick={() => setOnlySelected(!onlySelected)}>{onlySelected ? "查看全部作品" : "只看已选"}</button>
+          <button type="button" className="text-button" disabled={quickAdd.length === 0} onClick={() => quickAdd.forEach((analysis) => onToggleCompare(analysis.work.key))}>{available.length <= MAX_COMPARE_WORKS - selected.length ? "全选筛选结果" : `加入前 ${quickAdd.length || MAX_COMPARE_WORKS} 件`}</button>
+          <button type="button" className="text-button" disabled={selected.length === 0} onClick={() => selected.forEach((analysis) => onToggleCompare(analysis.work.key))}>清空选择</button>
+        </div>
+        <div className="compare-selection-status"><span>匹配 {candidates.length} 件 · 已选 {selected.length} / {MAX_COMPARE_WORKS}</span><span>{selected.length === MAX_COMPARE_WORKS ? "已达上限，移除一件即可替换" : "选择后即时更新图表"}</span></div>
+        <div className="compare-picker" aria-label="选择比较作品">
+          {candidates.length === 0 ? <p className="muted-copy">{analyses.length === 0 ? "同步后可在此选择比较对象。" : "没有匹配的作品，请调整搜索或筛选。"}</p> : candidates.map((analysis) => { const checked = compareKeys.includes(analysis.work.key); const disabled = !checked && selected.length >= MAX_COMPARE_WORKS; return <label key={analysis.work.key} className={cn("picker-item", checked && "selected", disabled && "disabled")}><input type="checkbox" checked={checked} disabled={disabled} aria-label={`比较：${analysis.work.title}`} onChange={() => onToggleCompare(analysis.work.key)} /><Thumbnail work={analysis.work} /><span><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentTypeForWork(analysis.work))} · {workConfidence(analysis)}</small></span></label>; })}
+        </div>
       </section>
-      {selected.length > 0 && <section className="compare-work-summary" aria-label="已选作品当前总量">{selected.map((analysis, index) => { const metrics = analysis.latestSample?.metrics ?? analysis.work.metrics; return <article key={analysis.work.key} style={{ "--series-color": SERIES_COLORS[index] } as React.CSSProperties}><div className="compare-work-heading"><Thumbnail work={analysis.work} /><button type="button" onClick={() => onOpenWork(analysis.work.key)}><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentTypeForWork(analysis.work))}</small></button></div><div className="compare-work-metrics"><span>浏览<strong><AnimatedNumber value={formatCount(metrics.views)} comparisonValue={metrics.views} /></strong></span><span>收藏<strong><AnimatedNumber value={formatCount(metrics.bookmarks)} comparisonValue={metrics.bookmarks} /></strong></span><span>获赞<strong><AnimatedNumber value={formatCount(metrics.likes)} comparisonValue={metrics.likes} /></strong></span></div></article>; })}</section>}
+      {selected.length > 0 && <section className="compare-work-summary" aria-label="已选作品当前总量">{selected.map((analysis, index) => { const metrics = analysis.latestSample?.metrics ?? analysis.work.metrics; return <article key={analysis.work.key} style={{ "--series-color": SERIES_COLORS[index] } as React.CSSProperties}><div className="compare-work-heading"><IconButton label={`移除比较：${analysis.work.title}`} onClick={() => onToggleCompare(analysis.work.key)}><X size={14} /></IconButton><Thumbnail work={analysis.work} /><button type="button" onClick={() => onOpenWork(analysis.work.key)}><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentTypeForWork(analysis.work))}</small></button></div><div className="compare-work-metrics"><span>浏览<strong><AnimatedNumber value={formatCount(metrics.views)} comparisonValue={metrics.views} /></strong></span><span>收藏<strong><AnimatedNumber value={formatCount(metrics.bookmarks)} comparisonValue={metrics.bookmarks} /></strong></span><span>获赞<strong><AnimatedNumber value={formatCount(metrics.likes)} comparisonValue={metrics.likes} /></strong></span></div></article>; })}</section>}
       {selected.length === 0 ? <EmptyState icon={<BarChart3 size={22} />} title="还没有比较对象" body="从上方选择至少两件作品，比较页会绘制它们的历史曲线。" /> : selected.length === 1 ? <EmptyState icon={<BarChart3 size={22} />} title="还差一件作品" body="再选择一件作品后，即可比较浏览、收藏和获赞的总量或增量曲线。" /> : <section className="section-band compare-band"><div className="section-heading"><div><p className="eyebrow">ABSOLUTE METRIC HISTORY</p><h2>{DASHBOARD_CHART_METRIC_LABELS[metric]}{valueMode === "delta" ? "增量" : "绝对值"}曲线</h2></div><span className="section-note">横轴：北京时间 · 纵轴：{valueMode === "delta" ? `每 ${compareBucketLabel(compareBucketLayout(series.flatMap((item) => item.points), range ?? { preset: "all", startMs: null, endMs: null }).hours)} 净增量` : "累计总量"}</span></div><div className="compare-chart-controls"><div className="compare-chart-selectors"><MetricSelector value={metric} onChange={setMetric} label="比较指标" metrics={COMPARE_CHART_METRICS} /><div className="compare-mode-selector" role="group" aria-label="数值口径"><button type="button" className={cn(valueMode === "total" && "active")} aria-pressed={valueMode === "total"} onClick={() => setValueMode("total")}>总量</button><button type="button" className={cn(valueMode === "delta" && "active")} aria-pressed={valueMode === "delta"} onClick={() => setValueMode("delta")}>增量</button></div></div><ChartRangeControl value={rangeValue} onChange={setRangeValue} /></div><div className="chart-wrap"><CompareChart series={series} metric={metric} valueMode={valueMode} range={range ?? { preset: "all", startMs: null, endMs: null }} /></div><div className="compare-legend">{series.map((item) => <button type="button" key={item.analysis.work.key} className="legend-item" onClick={() => onOpenWork(item.analysis.work.key)}><span className="legend-dot" style={{ backgroundColor: item.color }} />{item.analysis.work.title}<ChevronRight size={14} aria-hidden="true" /></button>)}</div>{valueMode === "delta" && <p className="chart-footnote"><Info size={14} aria-hidden="true" />分段净增量 · 无观察时段留空</p>}{series.some((item) => item.points.length < 2) && <p className="chart-footnote"><Info size={14} aria-hidden="true" />所选范围内不足两次有效{DASHBOARD_CHART_METRIC_LABELS[metric]}观察的作品不会被绘制。</p>}</section>}
     </div>
   );
@@ -1198,6 +1200,9 @@ function GrowthChart({ workKey, samples, observations, observationBatches = [] }
   const range = useMemo(() => resolvedRange(rangeValue), [rangeValue]);
   const timeline = useMemo(() => range ? buildWorkTimeline(workKey, samples, observations, range, observationBatches) : [], [observationBatches, observations, range, samples, workKey]);
   const points = useMemo(() => absoluteGrowthPoints(timeline, metric), [metric, timeline]);
+  // The range-start point carries the last known value, so the first observed
+  // change keeps its predecessor without rebuilding the entire history.
+  const incrementPoints = useMemo(() => absoluteTimelinePoints(timeline, metric, true), [timeline, metric]);
   const option = useMemo(() => buildGrowthChartOption({ points, metric }), [metric, points]);
   const label = DASHBOARD_CHART_METRIC_LABELS[metric];
   return (
@@ -1211,6 +1216,7 @@ function GrowthChart({ workKey, samples, observations, observationBatches = [] }
         summary={`${label}按绝对总数绘制，共 ${formatCount(points.length)} 个有效采样点；横轴按北京时间的真实采样时刻绘制。`}
         height={238}
       />
+      {range && <IncrementChart points={incrementPoints} metric={metric} range={range} name="作品" />}
     </div>
   );
 }
@@ -1670,7 +1676,7 @@ export function DashboardApp({ bootstrapRequest = null }: { bootstrapRequest?: D
         <Header activeTab={activeTab} data={data} isPreview={controller.isPreview} isLoading={controller.isLoading} hasLoadedData={controller.hasLoadedData} isSyncing={controller.isSyncing} onSync={() => void handleSync()} />
         {controller.isPreview && <div className="preview-banner" role="status"><Sparkles size={16} aria-hidden="true" /><span><strong>预览数据</strong> · 当前浏览器未连接扩展后台，下面是可交互的本地示例，不代表已完成真实同步。</span></div>}
         {agentOpened && controller.hasLoadedData && <div hidden={activeTab !== "agent"} className="dashboard-content"><Suspense fallback={<p role="status">正在载入 Agent…</p>}><LazyAgentView data={data} isPreview={controller.isPreview} active={activeTab === "agent"} /></Suspense></div>}
-        <div hidden={activeTab === "agent" && controller.hasLoadedData} className="dashboard-content">{controller.isLoading && !controller.isPreview ? <DashboardInitialLoading /> : !controller.hasLoadedData && controller.error ? <DashboardInitialError error={controller.error} onRetry={() => void controller.refresh()} /> : <>{activeTab === "overview" && <OverviewView analyses={overviewAnalyses} data={overviewPresentation.data} intraday={overviewIntraday} onOpenWork={openWork} onGoToWorks={() => setActiveTab("works")} animationSignal={overviewPresentation.animationEpoch} />}{activeTab === "works" && <WorksView analyses={analyses} intradayByWork={intradayByWork} compareKeys={compareKeys} onToggleCompare={toggleCompare} onOpenWork={openWork} completedRunWorks={newestCompletedRun?.works ?? null} coverCache={data.coverCache} />}{activeTab === "compare" && <CompareView analyses={analyses} compareKeys={compareKeys} onToggleCompare={toggleCompare} onOpenWork={openWork} data={data} />}{activeTab === "settings" && <SettingsView data={data} isPreview={controller.isPreview} error={controller.error} onSchedule={(enabled, interval) => void controller.setSchedule(enabled, interval)} onShowChips={(enabled) => void controller.setShowChips(enabled)} onExportJson={() => void exportJson()} onExportCsv={exportCsv} onOpenOnboarding={openOnboarding} onClearData={requestClearData} storageModel={storageModel} storageBusy={storageBusy} onRepairCovers={() => void repairCovers()} onMaintainData={() => void maintainData()} onChooseBackup={() => void configureBackupDirectory()} onImportFile={(file) => void previewImport(file)} maintenanceResult={maintenanceResult} />}</>}</div>
+        <div hidden={activeTab === "agent" && controller.hasLoadedData} className="dashboard-content">{controller.isLoading && !controller.isPreview ? <DashboardInitialLoading /> : !controller.hasLoadedData && controller.error ? <DashboardInitialError error={controller.error} onRetry={() => void controller.refresh()} /> : <>{activeTab === "overview" && <OverviewView analyses={overviewAnalyses} data={overviewPresentation.data} intraday={overviewIntraday} onOpenWork={openWork} onGoToWorks={() => setActiveTab("works")} animationSignal={overviewPresentation.animationEpoch} />}{activeTab === "works" && <WorksView analyses={analyses} intradayByWork={intradayByWork} onOpenWork={openWork} completedRunWorks={newestCompletedRun?.works ?? null} coverCache={data.coverCache} />}{activeTab === "compare" && <CompareView analyses={analyses} compareKeys={compareKeys} onToggleCompare={toggleCompare} onOpenWork={openWork} data={data} />}{activeTab === "settings" && <SettingsView data={data} isPreview={controller.isPreview} error={controller.error} onSchedule={(enabled, interval) => void controller.setSchedule(enabled, interval)} onShowChips={(enabled) => void controller.setShowChips(enabled)} onExportJson={() => void exportJson()} onExportCsv={exportCsv} onOpenOnboarding={openOnboarding} onClearData={requestClearData} storageModel={storageModel} storageBusy={storageBusy} onRepairCovers={() => void repairCovers()} onMaintainData={() => void maintainData()} onChooseBackup={() => void configureBackupDirectory()} onImportFile={(file) => void previewImport(file)} maintenanceResult={maintenanceResult} />}</>}</div>
       </main>
       {selectedAnalysis && <DetailDrawer analysis={selectedAnalysis} intraday={selectedIntraday} samples={data.samples} observations={data.observations} observationBatches={data.observationBatches} onClose={() => setSelectedKey(null)} />}
       {shouldShowOnboarding && <OnboardingModal onConfirm={(scheduled) => void finishOnboarding(scheduled)} onLater={() => void dismissOnboarding(true)} onClose={() => void dismissOnboarding(false)} error={onboardingError} />}
