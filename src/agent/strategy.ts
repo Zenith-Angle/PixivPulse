@@ -45,7 +45,8 @@ export function compactStatistics(name: string, value: unknown): unknown {
   const { definitions: _definitions, limitations: _limitations, sampleCountMeaning: _meaning, requestedRange: _range, ...rest } = row;
   if (Array.isArray(rest.rows)) rest.rows = rest.rows.map(item => compactStatistics(name, item));
   if (rest.metrics && typeof rest.metrics === "object") {
-    delete rest.series; delete rest.publishedAt; delete rest.absentSince; delete rest.likeRate;
+    // Series membership and publication age are essential comparison context.
+    delete rest.absentSince; delete rest.likeRate;
   }
   for (const key of ["growth", "followers", "quality", "content"]) if (rest[key]) rest[key] = compactStatistics(name, rest[key]);
   return rest;

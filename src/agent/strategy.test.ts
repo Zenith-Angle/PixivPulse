@@ -27,7 +27,7 @@ it("selects diverse candidates independently of popularity and does not send des
 });
 it("compacts redundant metadata while retaining metrics, missing values and measured endpoints", () => {
   const original = { definitions: "repeated", rows: [{ key: "a", metrics: { views: null, bookmarks: 4 }, publishedAt: "old", lastObservedAt: "now", interval: { fromAt: "a", toAt: "b", delta: { views: -5 } } }] };
-  expect(compactStatistics("rank_growth", original)).toEqual({ rows: [{ key: "a", metrics: { views: null, bookmarks: 4 }, lastObservedAt: "now", interval: { fromAt: "a", toAt: "b", delta: { views: -5 } } }] });
+  expect(compactStatistics("rank_growth", original)).toEqual({ rows: [{ key: "a", metrics: { views: null, bookmarks: 4 }, publishedAt: "old", lastObservedAt: "now", interval: { fromAt: "a", toAt: "b", delta: { views: -5 } } }] });
   expect(original.rows[0]!.publishedAt).toBe("old");
 });
 it("sampling honors explicit deep limits and permits full coverage only when configured", () => {

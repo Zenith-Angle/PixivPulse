@@ -6,6 +6,22 @@ import * as pageReader from "./novel-page";
 import { readNovelSample } from "./novel";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+it("continues through unread ranges without duplicated characters, including Unicode", () => {
+  const text = "甲😀乙丙".repeat(3000);
+  const exclude: { startCharacter: number; endCharacter: number }[] = [];
+  let read = 0;
+  for (let i = 0; i < 5; i++) {
+    const result = sampleNovelText(text, "balanced", "", { maxChars: 3000, fraction: 1, exclude });
+    expect(result.sampledCharacters).toBeLessThanOrEqual(3000);
+    for (const part of result.excerpts) {
+      expect(exclude.every(old => part.endCharacter <= old.startCharacter || part.startCharacter >= old.endCharacter)).toBe(true);
+      expect(part.text).toBe(Array.from(text).slice(part.startCharacter, part.endCharacter).join(""));
+    }
+    exclude.push(...result.excerpts);
+    read += result.sampledCharacters;
+  }
+  expect(read).toBe(12000);
+});
 it("samples distinct beginning, middle and ending, never whole text, without splitting emoji", () => {
   const text = "甲😀乙丙".repeat(1000);
   const result = sampleNovelText(text, "balanced", "");
@@ -26,7 +42,7 @@ it("reads a known novel directly without opening tabs and caches only snippets",
   const data = createDemoData(), work = data.works.find(work => work.type === "novel")!;
   const tabs = { query: vi.fn().mockResolvedValue([]), create: vi.fn(), remove: vi.fn() };
   vi.stubGlobal("chrome", { runtime: { id: "test-extension" }, tabs });
-  const fetch = vi.spyOn(pageReader, "readNovelDetail").mockResolvedValue(pageReader.sampleNovelDetail({ error: false, body: { id: work.id, title: work.title, content: "正文".repeat(2000) } }, work.id, "balanced", "", { maxChars: 3000, fraction: 0.5 }));
+  const fetch = vi.spyOn(pageReader, "readNovelDetail").mockResolvedValue({ contentFingerprint: "test-fingerprint", ...pageReader.sampleNovelDetail({ error: false, body: { id: work.id, title: work.title, content: "正文".repeat(2000) } }, work.id, "balanced", "", { maxChars: 3000, fraction: 0.5 }) });
   const args = { workKey: work.key, focus: "balanced", keyword: "", refresh: false };
   const signal = new AbortController().signal;
   await expect(readNovelSample(data, { ...args, workKey: "wrong" }, signal, true)).rejects.toThrow();
@@ -64,7 +80,7 @@ it("honors larger explicit sampling budgets without a hidden 6000-character or 7
 it("uses direct reading when an older open page rejects newly supported sampling parameters", async () => {
   const data = createDemoData(), work = data.works.find(work => work.type === "novel")!;
   vi.stubGlobal("chrome", { runtime: { id: "test-extension" }, tabs: { query: vi.fn().mockResolvedValue([{ id: 8, url: `https://www.pixiv.net/novel/show.php?id=${work.id}` }]), sendMessage: vi.fn().mockResolvedValue({ error: "采样参数无效。" }) } });
-  const fetch = vi.spyOn(pageReader, "readNovelDetail").mockResolvedValue(pageReader.sampleNovelDetail({ error: false, body: { id: work.id, content: "正文".repeat(5000) } }, work.id, "balanced", "", { maxChars: 9000, fraction: 1 }));
+  const fetch = vi.spyOn(pageReader, "readNovelDetail").mockResolvedValue({ contentFingerprint: "test-fingerprint", ...pageReader.sampleNovelDetail({ error: false, body: { id: work.id, content: "正文".repeat(5000) } }, work.id, "balanced", "", { maxChars: 9000, fraction: 1 }) });
   await readNovelSample(data, { workKey: work.key, focus: "balanced", keyword: "", refresh: true }, new AbortController().signal, false, { maxChars: 9000, fraction: 1 });
   expect(fetch).toHaveBeenCalledTimes(1);
 });

@@ -1,6 +1,6 @@
 # PixivPulse 隐私政策
 
-生效及更新日期：2026 年 9 月 8 日。适用于 PixivPulse 0.5.11 的现有功能。
+生效及更新日期：2026 年 9 月 8 日。适用于 PixivPulse 0.5.12 的现有功能。
 
 PixivPulse 由 GitHub 开发者 Zenith-Angle 维护，是独立的 Pixiv 作者作品增长分析扩展，与 Pixiv 官方无隶属关系。本政策说明扩展如何处理数据，包括仅保存在您设备上的数据。
 

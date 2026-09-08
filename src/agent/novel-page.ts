@@ -90,6 +90,11 @@ export async function readNovelDetail(id: string, focus: SamplingFocus, keyword:
   if (!/^\d+$/.test(id)) throw new Error("无效作品 ID。");
   const text = await fetchNovelResource(`https://www.pixiv.net/ajax/novel/${id}`, signal, onProgress);
   onProgress?.("整理多位置正文片段");
-  try { return sampleNovelDetail(JSON.parse(text), id, focus, keyword, limits); }
+  try {
+    const value = JSON.parse(text);
+    const sampled = sampleNovelDetail(value, id, focus, keyword, limits);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value.body.content));
+    return { ...sampled, contentFingerprint: Array.from(new Uint8Array(digest), n => n.toString(16).padStart(2, "0")).join("") };
+  }
   catch (error) { await pauseNovelReading(); if (error instanceof SyntaxError) throw new Error("Pixiv 正文接口返回了无法解析的 JSON；已停止读取。"); throw error; }
 }

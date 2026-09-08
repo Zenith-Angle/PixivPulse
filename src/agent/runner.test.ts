@@ -4,6 +4,7 @@ import { DEFAULT_AGENT_CONFIG, type AgentMessage } from "./types";
 import { generateTurn, safeAgentError, testConnection } from "./provider";
 import { runAgent, selectHistory } from "./runner";
 import * as novel from "./novel";
+import { sampleNovelText } from "./novel-sampling";
 
 const config = { ...DEFAULT_AGENT_CONFIG, apiKey: "never-log-this-key", shareData: true };
 const user: AgentMessage = { id: "u1", role: "user", content: "分析作品集", at: "now", status: "complete", traces: [] };
@@ -14,6 +15,101 @@ const hooks = () => ({ onText: vi.fn(), onTrace: vi.fn(), onBudget: vi.fn(), onU
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("Agent protocol and execution acceptance", () => {
+  it("requires a reading checkpoint at the working-set threshold and resumes without a new question", async () => {
+    const data = createDemoData(), work = data.works.find(row => row.type === "novel")!;
+    const read = vi.spyOn(novel, "readNovelSample").mockImplementation(async (_d, _a, _s, _r, limits) => ({ cached: false, result: { workKey: work.key, ...sampleNovelText("文字".repeat(50000), "balanced", "", limits) } }));
+    let step = 0;
+    const fetch = vi.fn().mockImplementation(async () => {
+      if (step === 9) return sse([response([message("继续完成")])]);
+      const note = step === 7;
+      const args = note ? { sourceIds: Array.from({ length: 6 }, (_, i) => `S${i + 1}`), notes: "[S1] [S2] [S3] [S4] [S5] [S6] 已观察文字；叙事关系未知，需补读。" } : { workKey: work.key, focus: "balanced", keyword: "", refresh: false };
+      const call = { type: "function_call", id: `c${step}`, call_id: `c${step++}`, name: note ? "record_reading_notes" : "sample_novel", arguments: JSON.stringify(args) };
+      return sse([response([call])]);
+    });
+    vi.stubGlobal("fetch", fetch);
+    const events = hooks();
+    await runAgent({ ...config, sampleOriginals: true, memoryEnabled: false }, [{ ...user, content: "按需补读正文" }], data, false, new AbortController().signal, events);
+    expect(events.onTrace.mock.calls[6]![0].result).toContain("请先调用 record_reading_notes");
+    expect(JSON.parse(events.onTrace.mock.calls[8]![0].result).error).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(7);
+    expect(events.onText.mock.calls.flat().join("")).toBe("继续完成");
+  });
+  it("stops combining reading positions when the original changes between batches", async () => {
+    const data = createDemoData(), work = data.works.find(row => row.type === "novel")!;
+    const read = vi.spyOn(novel, "readNovelSample")
+      .mockResolvedValueOnce({ cached: false, result: { sampledCharacters: 3000, totalCharacters: 20000, contentFingerprint: "version-a" } })
+      .mockResolvedValueOnce({ cached: false, result: { sampledCharacters: 3000, totalCharacters: 20000, contentFingerprint: "version-b" } });
+    let step = 0;
+    const fetch = vi.fn().mockImplementation(async (_url, init) => {
+      const request = JSON.parse(init.body);
+      if (step === 2) { expect(request.tools).toBeUndefined(); return sse([response([message("正文版本变化，停止合并。")])]); }
+      return sse([response([{ type: "function_call", id: `c${step}`, call_id: `c${step++}`, name: "sample_novel", arguments: JSON.stringify({ workKey: work.key, focus: "balanced", keyword: "", refresh: false }) }])]);
+    });
+    vi.stubGlobal("fetch", fetch);
+    const events = hooks();
+    await runAgent({ ...config, sampleOriginals: true }, [{ ...user, content: "分析正文" }], data, false, new AbortController().signal, events);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(events.onTrace.mock.calls.at(-1)![0].result).toContain("正文版本发生变化");
+  });
+  it.each(["responses", "chat"] as const)("checkpoints prose and continues with fresh ranges while preserving full traces (%s)", async protocol => {
+    const data = createDemoData(), work = data.works.find(row => row.type === "novel")!;
+    const original = "甲😀乙丙".repeat(6000);
+    const read = vi.spyOn(novel, "readNovelSample").mockImplementation(async (_data, _args, _signal, _remember, limits) => ({ cached: false, result: { workKey: work.key, title: work.title, ...sampleNovelText(original, "balanced", "", limits) } }));
+    let step = 0;
+    const fetch = vi.fn().mockImplementation(async (_url, init) => {
+      const request = JSON.parse(init.body);
+      const serialized = JSON.stringify(request);
+      if (step > 1) {
+        expect(serialized).toContain("rawExcerptsReleased");
+        expect(serialized).toContain("关系性质未知");
+        // At most the latest batch's raw text is present, not all earlier batches.
+        expect(serialized.split("甲😀乙丙").length).toBeLessThan(1000);
+      }
+      const done = step === 8;
+      const reading = step % 2 === 0;
+      const name = reading ? "sample_novel" : "record_reading_notes";
+      const args = reading ? { workKey: work.key, focus: "balanced", keyword: "", refresh: false } : { sourceIds: [`S${step}`], notes: `[S${step}] ${work.title}：观察到文字，关系性质未知，需要补充位置证据。` };
+      const call = { type: "function_call", id: `c${step}`, call_id: `c${step}`, name, arguments: JSON.stringify(args) };
+      step++;
+      return protocol === "responses" ? sse([response(done ? [message("完成")] : [call])]) : sse([{ choices: [{ delta: done ? { content: "完成" } : { tool_calls: [{ index: 0, id: call.id, type: "function", function: { name, arguments: call.arguments } }] }, finish_reason: done ? "stop" : "tool_calls" }] }]);
+    });
+    vi.stubGlobal("fetch", fetch);
+    const events = hooks();
+    await runAgent({ ...config, protocol, sampleOriginals: true, memoryEnabled: false }, [{ ...user, content: "结合正文逐步分析" }], data, false, new AbortController().signal, events);
+    expect(read).toHaveBeenCalledTimes(4);
+    expect(read.mock.calls.every(call => call[4]!.maxChars <= 3000)).toBe(true);
+    expect(read.mock.calls.at(-1)![4]!.exclude!.length).toBeGreaterThan(3);
+    const traces = events.onTrace.mock.calls.map(([trace]) => JSON.parse(trace.result));
+    expect(traces.some(trace => trace.error)).toBe(false);
+    expect(traces[0].data.excerpts[0].text).toContain("甲😀乙丙");
+    expect(fetch).toHaveBeenCalledTimes(9);
+  });
+  it.each(["responses", "chat"] as const)("keeps metrics usable after catalogue and prose in a million-context mixed question (%s)", async protocol => {
+    const data = createDemoData(), base = data.works.find(row => row.type === "novel")!;
+    data.works = Array.from({ length: 36 }, (_, i) => ({ ...base, key: `novel-${i}`, id: String(i), title: `作品${i}：${"标题".repeat(25)}`, seriesTitle: i < 18 ? "甲系列" : "乙系列" }));
+    const call = (name: string, args: object) => ({ type: "function_call", id: name, call_id: name, name, arguments: JSON.stringify(args) });
+    const batches = [
+      [call("search_works", { query: "", offset: 0, limit: 30 })],
+      [call("get_analysis_brief", { from: null, to: null }), call("select_reading_samples", { query: "", limit: 36 })],
+      [call("read_content_samples", { workKeys: ["novel-0"], refresh: false })],
+      [call("rank_works", { metric: "views", minViews: 0, offset: 0, limit: 10 }), call("compare_works", { workKeys: ["novel-0", "novel-18"], from: null, to: null }), call("summarize_groups", { by: "series", offset: 0, limit: 10 })],
+    ];
+    vi.spyOn(novel, "readNovelSample").mockResolvedValue({ cached: false, result: { workKey: "novel-0", excerpts: [{ text: "普通文学证据。".repeat(400) }], sampledCharacters: 2800, totalCharacters: 84000 } });
+    const fetch = vi.fn().mockImplementation(async () => {
+      const calls = batches.shift();
+      return protocol === "responses" ? sse([response(calls ?? [message("数据与正文均已取得")])]) : sse([{ choices: [{ delta: calls ? { tool_calls: calls.map((c, index) => ({ index, id: c.id, type: "function", function: { name: c.name, arguments: c.arguments } })) } : { content: "数据与正文均已取得" }, finish_reason: calls ? "tool_calls" : "stop" }] }]);
+    });
+    vi.stubGlobal("fetch", fetch);
+    const events = hooks();
+    await runAgent({ ...config, protocol, memoryEnabled: false, sampleOriginals: true, contextWindow: 1000000, maxOutputTokens: 8192, inputBudget: 0, totalInputBudget: 0, maxSteps: 0 }, [{ ...user, content: "分析不同题材的数据差异，结合文章正文" }], data, false, new AbortController().signal, events);
+    const results = events.onTrace.mock.calls.map(([trace]) => JSON.parse(trace.result));
+    expect(results.map(row => row.error).filter(Boolean)).toEqual([]);
+    expect(results[0].data.rows).toHaveLength(30);
+    expect(results[4].data.rows).toHaveLength(10);
+    expect(results[5].data).toHaveLength(2);
+    expect(results[6].data.rows).toHaveLength(2);
+    expect(events.onText.mock.calls.flat().join("")).toBe("数据与正文均已取得");
+  });
   it.each(["responses", "chat"] as const)("streams public commentary independently of final text with %s", async protocol => {
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ start(value) { controller = value; } }), { headers: { "content-type": "text/event-stream" } })));
@@ -340,7 +436,7 @@ describe("Agent protocol and execution acceptance", () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(sse([response([{ type: "function_call", id: "f", call_id: "c", name: "search_works", arguments: '{"query":"","offset":0,"limit":30}' }])])).mockResolvedValueOnce(sse([response([message("请缩小范围")])]));
     vi.stubGlobal("fetch", fetchMock);
     const events = hooks();
-    await runAgent(config, [user], data, false, new AbortController().signal, events);
+    await runAgent({ ...config, inputBudget: 24000 }, [user], data, false, new AbortController().signal, events);
     const result = JSON.parse(events.onTrace.mock.calls.at(-1)![0].result);
     expect(result.error).toBeUndefined();
     expect(result.data.total).toBe(30);

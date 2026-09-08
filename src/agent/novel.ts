@@ -5,13 +5,13 @@ import { SAMPLING_FOCI, DEFAULT_READING_LIMITS, type ReadingLimits, type Samplin
 import type { ToolDefinition } from "./types";
 
 export const NOVEL_TOOL: ToolDefinition = {
-  name: "sample_novel", description: "Read limited visible original novel excerpts (not title/description). Bounded excerpts with exact positions; application selects length according to available budget. Prefer balanced for multi-position reading. Only known local novels. Report actual coverage; never infer unseen plot. Use opening/middle/ending/balanced or keyword; keyword empty unless keyword focus. Refresh false reuses 24h cache.",
+  name: "sample_novel", description: "Read limited visible original novel excerpts (not title/description). Bounded excerpts with exact positions; application selects length according to available budget. Prefer balanced for initial multi-position reading. Repeat to obtain unread positions; refresh is NOT needed for continuation. Only known local novels. Report actual coverage; never infer unseen plot. Use opening/middle/ending/balanced or keyword; keyword empty unless keyword focus. Refresh false reuses 24h cache.",
   parameters: { type: "object", properties: { workKey: { type: "string" }, focus: { type: "string", enum: SAMPLING_FOCI }, keyword: { type: "string" }, refresh: { type: "boolean" } }, required: ["workKey", "focus", "keyword", "refresh"], additionalProperties: false },
 };
 
 export const READING_TOOLS: ToolDefinition[] = [
   { name: "select_reading_samples", description: "Select local novels by query or diverse series/length/recency. Lightweight metadata only; choose actual content types AFTER reading.", parameters: { type: "object", properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER } }, required: ["query", "limit"], additionalProperties: false } },
-  { name: "read_content_samples", description: "Read requested known novels in ONE call with balanced beginning/middle/ending excerpts. Splits the available reading budget across works. Prefer for comparison; returns actual coverage and sources; automatic depth may cover an entire short work.", parameters: { type: "object", properties: { workKeys: { type: "array", items: { type: "string" }, minItems: 1 }, refresh: { type: "boolean" } }, required: ["workKeys", "refresh"], additionalProperties: false } },
+  { name: "read_content_samples", description: "Read requested known novels in ONE call with balanced beginning/middle/ending excerpts. Splits a bounded per-call reading budget across works; automatic depth returns at most 3000 characters per work. Prefer for comparison; returns actual coverage and sources; Continue with another call only for unresolved evidence gaps, and checkpoint reading notes between batches.", parameters: { type: "object", properties: { workKeys: { type: "array", items: { type: "string" }, minItems: 1 }, refresh: { type: "boolean" } }, required: ["workKeys", "refresh"], additionalProperties: false } },
 ];
 
 export async function readNovelSample(data: DashboardData, args: Record<string, unknown>, signal: AbortSignal, remember: boolean, limits: ReadingLimits = DEFAULT_READING_LIMITS, onProgress?: (detail: string) => void) {
@@ -25,7 +25,7 @@ async function readUnlocked(data: DashboardData, args: Record<string, unknown>, 
   const work = data.works.find(work => work.key === args.workKey && work.type === "novel");
   if (!work || !/^\d+$/.test(work.id) || !SAMPLING_FOCI.includes(args.focus as never) || typeof args.keyword !== "string" || args.keyword.length > 80 || typeof args.refresh !== "boolean"
     || Object.keys(args).sort().join() !== "focus,keyword,refresh,workKey" || (args.focus === "keyword" ? !args.keyword.trim() : !!args.keyword)) throw new Error("请选择本地小说及有效采样方式；关键词采样需填写关键词。");
-  const scope = `novel-v3:${data.settings.boundAccount?.id ?? "unbound"}:${work.key}`;
+  const scope = `novel-v4:${data.settings.boundAccount?.id ?? "unbound"}:${work.key}`;
   const id = `${scope}:${JSON.stringify([work.title, work.publishedAt, args.focus, args.keyword, limits])}`;
   signal.throwIfAborted();
   onProgress?.("检查本地正文缓存");
@@ -38,7 +38,9 @@ async function readUnlocked(data: DashboardData, args: Record<string, unknown>, 
   const tabs = await chrome.tabs.query({ url: "https://www.pixiv.net/novel/show.php*" });
   const tab = tabs.find(tab => tab.url && new URL(tab.url).searchParams.get("id") === work.id);
   let sampled;
-  if (tab?.id !== undefined) {
+  // Older content scripts do not understand excluded positions. Use the canonical
+  // reader for continuation so a stale open tab cannot silently repeat excerpts.
+  if (tab?.id !== undefined && limits.exclude === undefined) {
     let reply;
     try { reply = await chrome.tabs.sendMessage(tab.id, { type: "AGENT_SAMPLE_NOVEL", id: work.id, focus: args.focus, keyword: args.keyword, ...limits }); } catch { /* Pre-upgrade pages may not have a receiver. */ }
     if (reply?.error && reply.error !== "采样参数无效。") throw new Error(reply.error);
