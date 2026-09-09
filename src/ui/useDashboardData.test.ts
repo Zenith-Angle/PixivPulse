@@ -5,6 +5,26 @@ import { createDemoData, createEmptyDashboardData } from "./demoData";
 import { useDashboardData, isUnsupportedRuntimeMessageError } from "./useDashboardData";
 
 describe("useDashboardData compatibility", () => {
+  it("rereads local data on return to the dashboard and listens for settings changes", async () => {
+    const data = createDemoData();
+    const updated = { ...data, settings: { ...data.settings, showPixivChips: false } };
+    let listener: ((changes: Record<string, chrome.storage.StorageChange>, area: string) => void) | undefined;
+    const sendMessage = vi.fn().mockResolvedValueOnce({ ok: true, data }).mockResolvedValue({ ok: true, data: updated });
+    const removeListener = vi.fn();
+    vi.stubGlobal("chrome", { runtime: { sendMessage }, storage: { onChanged: { addListener: (value: typeof listener) => { listener = value; }, removeListener } } });
+    const { result, unmount } = renderHook(() => useDashboardData());
+    await waitFor(() => expect(result.current.data).toBe(data));
+    act(() => { window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); });
+    await waitFor(() => expect(result.current.data).toBe(updated));
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    act(() => listener?.({ "pixivPulse.settings": { newValue: updated.settings } }, "local"));
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(3));
+    unmount();
+    expect(removeListener).toHaveBeenCalled();
+    window.dispatchEvent(new Event("focus"));
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+  });
+
   it("consumes a settled primed request once under StrictMode", async () => {
     const data = createDemoData();
     const sendMessage = vi.fn(async () => ({ ok: true, data: createEmptyDashboardData() }));
@@ -309,6 +329,26 @@ describe("useDashboardData compatibility", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(21); });
 
       expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith({ type: "GET_DASHBOARD_DATA" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not starve a data refresh under a continuous stream of sync progress", async () => {
+    vi.useFakeTimers();
+    try {
+      const data = createDemoData();
+      let listener: ((changes: Record<string, chrome.storage.StorageChange>, area: string) => void) | undefined;
+      const sendMessage = vi.fn(async () => ({ ok: true, data }));
+      vi.stubGlobal("chrome", { runtime: { sendMessage }, storage: { onChanged: { addListener: (value: typeof listener) => { listener = value; }, removeListener: vi.fn() } } });
+      renderHook(() => useDashboardData(Promise.resolve({ ok: true, data })));
+      await act(async () => { await Promise.resolve(); });
+      listener?.({ "pixivPulse.dataRevision": { newValue: "new" } }, "local");
+      for (let index = 0; index < 4; index += 1) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+        listener?.({ "pixivPulse.syncState": { newValue: data.syncState } }, "local");
+      }
       expect(sendMessage).toHaveBeenCalledWith({ type: "GET_DASHBOARD_DATA" });
     } finally {
       vi.useRealTimers();

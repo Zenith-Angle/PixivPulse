@@ -23,6 +23,8 @@ import { AnimatedNumber } from "./AnimatedNumber";
 import { formatCount, formatDelta, formatTimestamp } from "./helpers";
 import { buildFollowerAnalytics, type AccountFollowerSample, type FollowerAnalytics } from "./followerAnalytics";
 import { sendRuntimeMessage, type DashboardDataRequest } from "./dashboardDataRequest";
+import { displayedSyncError, displayedSyncStatus, latestSyncRun } from "./syncPresentation";
+import { useRefreshOnResume } from "./useRefreshOnResume";
 
 const SYNC_STATUSES: SyncState["status"][] = ["opening", "collecting", "rechecking", "committing"];
 
@@ -52,14 +54,11 @@ const statusLabel = (status: SyncState["status"] | null | undefined): string => 
   }
 };
 
-const latestRun = (data: DashboardData) => data.runs[0] ?? null;
+const latestRun = latestSyncRun;
 
-const syncStatus = (data: DashboardData): SyncState["status"] => data.syncState?.status ?? latestRun(data)?.status ?? "idle";
+const syncStatus = displayedSyncStatus;
 
-const syncError = (data: DashboardData): string | null => {
-  if (isActiveStatus(data.syncState?.status)) return data.syncState?.errorMessage ?? null;
-  return data.syncState?.errorMessage ?? latestRun(data)?.errorMessage ?? null;
-};
+const syncError = displayedSyncError;
 
 const completedWorkCount = (data: DashboardData): number => latestRun(data)?.status === "completed"
   ? latestRun(data)?.works ?? data.works.length
@@ -171,6 +170,7 @@ export function usePopupData(bootstrapRequest: DashboardDataRequest | null = nul
   }, [applyResponse, finishRequestedSync]);
 
   const refresh = useCallback(() => load(), [load]);
+  useRefreshOnResume(refresh, !isPreview);
 
   useEffect(() => {
     if (initialLoadStartedRef.current) return;

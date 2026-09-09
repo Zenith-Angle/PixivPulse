@@ -3,7 +3,8 @@ import type { DashboardData, SyncState } from "../domain/types";
 import type { RuntimeMessage, RuntimeResponse, StorageCenterInfo } from "../domain/messages";
 import type { MaintenanceResult } from "../domain/messages";
 import { createDemoData, createEmptyDashboardData } from "./demoData";
-import { DATA_REVISION_STORAGE_KEY } from "../data/local-state";
+import { DATA_REVISION_STORAGE_KEY, SETTINGS_STORAGE_KEY } from "../data/local-state";
+import { useRefreshOnResume } from "./useRefreshOnResume";
 import { sendRuntimeMessage, type DashboardDataRequest } from "./dashboardDataRequest";
 
 const hasChromeRuntime = (): boolean =>
@@ -91,6 +92,7 @@ export const useDashboardData = (bootstrapRequest: DashboardDataRequest | null =
   }, []);
 
   const refresh = useCallback(() => load(), [load]);
+  useRefreshOnResume(refresh, !isPreview);
 
   const refreshSyncState = useCallback(async () => {
     if (!hasChromeRuntime()) return;
@@ -137,7 +139,7 @@ export const useDashboardData = (bootstrapRequest: DashboardDataRequest | null =
     let pendingRefreshFlags = 0;
     const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
       if (areaName !== "local") return;
-      const hasDataRevision = DATA_REVISION_STORAGE_KEY in changes;
+      const hasDataRevision = DATA_REVISION_STORAGE_KEY in changes || SETTINGS_STORAGE_KEY in changes;
       const hasSyncState = "pixivPulse.syncState" in changes;
       const hasCoverRevision = "pixivPulse.coverCacheRevision" in changes;
       if (!hasDataRevision && !hasSyncState && !hasCoverRevision) return;
@@ -146,8 +148,9 @@ export const useDashboardData = (bootstrapRequest: DashboardDataRequest | null =
         if (hasSyncState) pendingRefreshFlags |= 1;
         if (hasCoverRevision) pendingRefreshFlags |= 2;
       }
-      window.clearTimeout(refreshTimer);
+      if (refreshTimer !== undefined) return;
       refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined;
         const flags = pendingRefreshFlags;
         pendingRefreshFlags = 0;
         if ((flags & 4) !== 0) void refresh();

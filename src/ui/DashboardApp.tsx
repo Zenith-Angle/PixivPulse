@@ -1,3 +1,4 @@
+import { displayedSyncStatus, latestSyncResultAt } from "./syncPresentation";
 import {
   lazy,
   Suspense,
@@ -455,7 +456,7 @@ function Sidebar({ activeTab, onChange, onOpenOnboarding }: { activeTab: Dashboa
       <div className="sidebar-bottom">
         <div className="local-badge"><span className="status-dot" />数据保存在本机</div>
         <button type="button" className="help-link" onClick={onOpenOnboarding} title="重新查看首次使用说明"><Info size={15} aria-hidden="true" />使用说明</button>
-        <p className="version-label">PixivPulse 0.5.12 · 本地优先</p>
+        <p className="version-label">PixivPulse 0.5.13 · 本地优先</p>
       </div>
     </aside>
   );
@@ -481,7 +482,8 @@ function SyncStatus({ data, isSyncing, isPreview }: { data: DashboardData; isSyn
   if (isPreview && !isSyncing) {
     return <span className="sync-status neutral"><span className="status-dot" />预览就绪</span>;
   }
-  const status = data.syncState?.status ?? (isSyncing ? "opening" : undefined);
+  const status = isSyncing && !["opening", "collecting", "rechecking", "committing"].includes(data.syncState?.status ?? "")
+    ? "opening" : displayedSyncStatus(data);
   const tone = status === "failed" ? "danger" : status === "completed" ? "success" : status && status !== "idle" ? "progress" : "neutral";
   return <span className={cn("sync-status", tone)}><span className="status-dot" />{syncStatusLabel(status)}</span>;
 }
@@ -503,7 +505,7 @@ function Header({
   isSyncing: boolean;
   onSync: () => void;
 }) {
-  const lastCollected = data.syncState?.updatedAt ?? data.runs.find((run) => run.status === "completed")?.finishedAt;
+  const lastCollected = latestSyncResultAt(data);
   return (
     <header className="page-header">
       <div className="page-heading">

@@ -28,6 +28,7 @@ import {
   validatePassivePagePayload,
 } from "./repository";
 import { buildMetricFrame } from "./frame-storage";
+import { latestSyncResultAt } from "../ui/syncPresentation";
 
 function work(id = "101", views = 100): ParsedWork {
   return {
@@ -287,6 +288,31 @@ describe("repository atomic snapshots", () => {
     expect(data.observationBatches?.map((batch) => batch.workKeys)).toEqual([["illust-101"], ["illust-101"]]);
     expect(data.observationBatches?.map((batch) => batch.changedWorkKeys)).toEqual([[], ["illust-101"]]);
     expect(data.samples.filter((item) => item.workKey === "illust-101")).toHaveLength(1);
+  });
+
+  it("advances passive and subsequent manual observation times without fabricating metric growth", async () => {
+    const initialAt = "2026-08-30T16:30:00.000Z";
+    const passiveAt = "2026-08-30T16:40:00.000Z";
+    const manualAt = "2026-08-30T16:50:00.000Z";
+    await stagePage(page("baseline", [work()], { collectedAt: initialAt }));
+    await completeSync({ runId: "baseline", trigger: "manual", startedAt: initialAt, finishedAt: initialAt });
+    const baseline = await getDashboardData();
+    await mergePassivePageSnapshot(page("passive-same", [work()], { collectedAt: passiveAt }), {
+      now: Date.parse(passiveAt), finishedAt: passiveAt,
+    });
+    const passive = await getDashboardData();
+    expect(latestSyncResultAt(passive)).toBe(passiveAt);
+    expect(passive.runs[0]).toMatchObject({ trigger: "passive", changedWorks: 0 });
+    expect(passive.works[0]?.lastSeenAt).toBe(passiveAt);
+    expect(passive.samples).toHaveLength(baseline.samples.length);
+    await stagePage(page("manual-same", [work()], { collectedAt: manualAt }));
+    await completeSync({ runId: "manual-same", trigger: "manual", startedAt: manualAt, finishedAt: manualAt });
+    const manual = await getDashboardData();
+    expect(latestSyncResultAt(manual)).toBe(manualAt);
+    expect(manual.runs[0]).toMatchObject({ runId: "manual-same", changedWorks: 0 });
+    expect(manual.works[0]?.lastSeenAt).toBe(manualAt);
+    expect(manual.samples).toHaveLength(baseline.samples.length);
+    expect(manual.observationBatches).toHaveLength(3);
   });
 
   it("binds an account, updates only mutable account fields, and rejects a mismatch", async () => {

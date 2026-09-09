@@ -10,6 +10,25 @@ import { analyzeDashboard, toSafeCsv } from "./helpers";
 import { ClearDataModal, CompareView, DashboardApp, DetailDrawer, OverviewView, SettingsView, WorksView } from "./DashboardApp";
 
 describe("PixivPulse dashboard", () => {
+  it("shows a newer zero-growth passive observation instead of the old active-sync time", async () => {
+    const data = createDemoData();
+    data.settings.onboardingComplete = true;
+    const oldTime = "2026-09-09T16:30:00.000Z";
+    const newTime = "2026-09-09T16:40:00.000Z";
+    data.runs = [{ ...data.runs[0]!, runId: "old", status: "completed", finishedAt: oldTime }];
+    data.syncState = { ...data.syncState!, runId: "old", status: "completed", updatedAt: oldTime };
+    const updated = { ...data, runs: [{ ...data.runs[0]!, runId: "passive-new", trigger: "passive" as const, startedAt: newTime, finishedAt: newTime, changedWorks: 0 }, ...data.runs] };
+    let listener: ((changes: Record<string, chrome.storage.StorageChange>, area: string) => void) | undefined;
+    const sendMessage = vi.fn().mockResolvedValueOnce({ ok: true, data }).mockResolvedValue({ ok: true, data: updated });
+    vi.stubGlobal("chrome", { runtime: { sendMessage }, storage: { onChanged: { addListener: (value: typeof listener) => { listener = value; }, removeListener: vi.fn() } } });
+    const { container } = render(<DashboardApp />);
+    await waitFor(() => expect(container.querySelector(".last-sync")).toHaveTextContent("00:30"));
+    act(() => listener?.({ [DATA_REVISION_STORAGE_KEY]: { newValue: "passive-new" } }, "local"));
+    await waitFor(() => expect(container.querySelector(".last-sync")).toHaveTextContent("00:40"));
+    expect(container.querySelector(".last-sync")).not.toHaveTextContent("00:30");
+    expect(sendMessage.mock.calls.every(([message]) => message.type === "GET_DASHBOARD_DATA")).toBe(true);
+  });
+
   beforeEach(() => {
     window.localStorage.clear();
   });
