@@ -11,6 +11,19 @@ import * as runner from "../agent/runner";
 beforeEach(async () => { await deleteDB("pixivpulse-agent"); sessionStorage.clear(); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe("Agent workspace", () => {
+  it("keeps legacy usage inspectable and hides old generated milestones", async () => {
+    await saveConversation({ id: "legacy-usage", accountId: "preview", title: "旧用量", updatedAt: "now", messages: [
+      { id: "a", role: "assistant", content: "旧回答", at: "now", status: "complete", traces: [], usage: { input: 123, output: 45, cachedInput: 67 } },
+      { id: "b", role: "assistant", content: "另一答", at: "now", status: "complete", traces: [], activity: [{ id: "milestone:S1", kind: "commentary", text: "已复用来源并完成查询", at: "now" }] },
+    ] });
+    render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "旧用量" }));
+    const answer = within((await screen.findByText("旧回答")).closest("article")!);
+    expect(answer.getByText(/本轮累计 tokens/)).not.toBeVisible();
+    fireEvent.click(answer.getByRole("button", { name: "展开执行过程" }));
+    expect(answer.getByText(/服务商缓存输入 67/)).toBeVisible();
+    expect(screen.queryByText("已复用来源并完成查询")).not.toBeInTheDocument();
+  });
   it("streams public paragraphs apart from collapsed operations and copies only the final answer", async () => {
     await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
     let hooks!: runner.RunHooks, finish!: () => void;
@@ -101,7 +114,7 @@ describe("Agent workspace", () => {
   it("shows live progress and flushes the last text burst while generation remains open", async () => {
     await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
     vi.spyOn(runner, "runAgent").mockImplementation(async (_c, _m, _d, _p, signal, hooks) => {
-      hooks.onProgress?.("正在定位作品"); hooks.onText("前半"); hooks.onText("后半");
+      hooks.onStatus?.("正在核对样本范围"); hooks.onProgress?.("正在定位作品"); hooks.onText("前半"); hooks.onText("后半");
       return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
     });
     render(<AgentView data={createDemoData()} isPreview />);
@@ -110,27 +123,32 @@ describe("Agent workspace", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "进度测试" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await screen.findByText("前半后半");
-    expect(screen.getByText(/正在定位作品 · 已用时/)).toBeInTheDocument();
+    expect(screen.getByText(/正在核对样本范围 · 已用时/)).toBeVisible();
+    expect(screen.getByText("正在定位作品")).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
     await screen.findByText("生成已停止，可重试。");
   });
-  it("separates tool commentary, auto-folds for the answer and restores expandable history", async () => {
+  it("keeps service feedback visible while execution details stay collapsed, including restored history", async () => {
     await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
     let hooks!: runner.RunHooks, finish!: () => void;
     vi.spyOn(runner, "runAgent").mockImplementation(async (_c, _m, _d, _p, _s, value) => { hooks = value; hooks.onProgress?.("读取正文：《示例章节》"); await new Promise<void>(resolve => { finish = resolve; }); });
     const view = render(<AgentView data={createDemoData()} isPreview />);
     fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "比较正文" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    await screen.findByRole("button", { name: "收起执行过程" });
+    await screen.findByRole("button", { name: "展开执行过程" });
     await waitFor(() => expect(hooks).toBeDefined());
     hooks.onText("先核对样本范围。"); hooks.onToolTurn?.("先核对样本范围。");
     await waitFor(() => expect(document.querySelector(".assistant .agent-answer .agent-markdown")?.textContent).toBe(""));
-    expect(await screen.findByText("先核对样本范围。")).toBeVisible();
+    const publicFeed = () => within(document.querySelector(".agent-service-feed") as HTMLElement);
+    await waitFor(() => expect(document.querySelector(".agent-service-feed")).not.toBeNull());
+    expect(await publicFeed().findByText("先核对样本范围。")).toBeVisible();
+    expect(screen.getByText("读取正文：《示例章节》")).not.toBeVisible();
     hooks.onProgress?.("结合已获取的证据组织回答"); hooks.onText("保留角色行动的细节。");
-    fireEvent.click(await screen.findByRole("button", { name: "收起执行过程" }));
-    expect(screen.getByText("先核对样本范围。")).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "展开执行过程" }));
-    expect(screen.getByText("先核对样本范围。")).toBeVisible();
+    expect(screen.getByText("读取正文：《示例章节》")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "收起执行过程" }));
+    expect(publicFeed().getByText("先核对样本范围。")).toBeVisible();
+    expect(screen.getByText("读取正文：《示例章节》")).not.toBeVisible();
     finish(); await screen.findByRole("button", { name: "重新生成" });
     await screen.findByRole("button", { name: "展开执行过程" });
     const saved = (await listConversations("preview"))[0]!.messages.at(-1)!;
@@ -138,8 +156,9 @@ describe("Agent workspace", () => {
     expect(saved.progress).toContainEqual(expect.objectContaining({ detail: "先核对样本范围。" }));
     view.unmount(); render(<AgentView data={createDemoData()} isPreview />);
     fireEvent.click(await screen.findByRole("button", { name: "比较正文" }));
-    fireEvent.click(await screen.findByRole("button", { name: "展开执行过程" }));
-    expect(screen.getByText("先核对样本范围。")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "展开执行过程" })).toBeVisible();
+    expect(publicFeed().getByText("先核对样本范围。")).toBeVisible();
+    expect(screen.getByText("读取正文：《示例章节》")).not.toBeVisible();
   });
   it("leaves settings when creating a conversation", async () => {
     render(<AgentView data={createDemoData()} isPreview />);

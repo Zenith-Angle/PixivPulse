@@ -45,8 +45,7 @@ describe("Agent protocol and execution acceptance", () => {
     const beforeContext = JSON.stringify(before.input ?? before.messages), afterContext = JSON.stringify(after.input ?? after.messages);
     expect(afterContext.length).toBeLessThan(beforeContext.length / 2);
     expect(afterContext.split(notes).length - 1).toBe(1);
-    expect(events.onCommentary.mock.calls.filter(([id]) => id.startsWith("milestone:"))).toHaveLength(4);
-    expect(events.onCommentary).toHaveBeenCalledWith("milestone:S3", expect.stringContaining("可回查的笔记"));
+    expect(events.onCommentary).not.toHaveBeenCalled();
     expect(events.onText).toHaveBeenCalledWith("已回查来源 [S2]。");
   });
   it.each(["responses", "chat"] as const)("ignores legacy budgets and sends long questions without output caps with %s", async protocol => {

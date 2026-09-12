@@ -29,45 +29,30 @@ function ReadingQueue({ reading }: { reading: ReadingProgress[] }) {
 
 function RunProgress({ message }: { message: AgentMessage }) {
   const running = message.status === "running";
-  const autoOpen = running && message.phase !== "answering";
-  const [open, setOpen] = useState(autoOpen);
-  const lifecycle = `${message.status}:${autoOpen}`;
-  const previousLifecycle = useRef(lifecycle);
+  const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const listRef = useRef<HTMLOListElement>(null);
-  const follow = useRef(true);
-  useEffect(() => {
-    // Only a real run transition may override the user's toggle. An initial
-    // passive effect must not close history the user has just expanded.
-    if (previousLifecycle.current !== lifecycle) { previousLifecycle.current = lifecycle; setOpen(autoOpen); }
-  }, [autoOpen, lifecycle]);
   useEffect(() => { if (!running) return; const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer); }, [running]);
   const rows = message.progress ?? [];
-  useEffect(() => { const list = listRef.current; if (list && open && follow.current) list.scrollTop = list.scrollHeight; }, [rows.length, open]);
-  const reading = message.reading ?? [];
-  if (!rows.length && !reading.length && !message.activity?.length && !running) return null;
-  const label = running ? rows.at(-1)?.label ?? "正在启动" : message.status === "complete" ? "执行完成" : message.status === "stopped" ? "执行已停止" : "执行遇到问题";
-  return <section className={`agent-progress ${message.activity?.length ? "conversational" : ""}`} aria-label="Agent 执行过程">
+  const publicRows = (message.activity ?? []).filter(item => item.kind === "commentary" && !item.id.startsWith("milestone:"));
+  const operations = (message.activity ?? []).filter(item => item.kind === "operation");
+  if (!running && !rows.length && !message.traces.length && !message.activity?.length && !message.reading?.length && !message.usage) return null;
+  const label = running ? message.statusLabel ?? "正在分析你的问题" : message.status === "complete" ? "分析完成" : message.status === "stopped" ? "分析已停止" : "分析遇到问题";
+  return <section className="agent-progress conversational" aria-label="Agent 执行过程">
     <div className="agent-progress-header">
       <span className={`agent-progress-dot ${running ? "running" : ""}`} />
       <span className="agent-progress-label" role={running ? "status" : undefined}>{label}{running && ` · 已用时 ${Math.max(0, Math.floor((now - Date.parse(message.at)) / 1000))} 秒`}</span>
-      <small>{message.activity?.filter(item => item.kind === "operation" && item.status === "complete").length ?? 0} 项已完成</small>
-      <button type="button" className="agent-process-toggle" aria-label={open ? "收起执行过程" : "展开执行过程"} title={open ? "收起执行过程" : "展开执行过程"} aria-expanded={open} aria-controls={`process-${message.id}`} onClick={() => setOpen(value => !value)}>{open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
+      <button type="button" className="agent-process-toggle" aria-label={open ? "收起执行过程" : "展开执行过程"} title="执行详情" aria-expanded={open} aria-controls={`process-${message.id}`} onClick={() => setOpen(value => !value)}>执行详情{open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
     </div>
-    {!open && message.activity?.findLast(item => item.kind === "commentary") && <div className="agent-latest-milestone">阶段小结：{message.activity.findLast(item => item.kind === "commentary")!.text}</div>}
-    <div id={`process-${message.id}`} hidden={!open}>
-    {message.activity?.length ? <div className="agent-activity-feed">{message.activity.map(item => item.kind === "commentary" ?
-      <div className="agent-commentary" key={item.id}><AgentMarkdown content={item.text} /></div> :
-      <details className={`agent-operation ${item.status ?? "complete"}`} key={item.id}>
-        <summary><span className="agent-tool-icon" aria-hidden="true">›_</span><span>{item.text}</span><small>{item.reading?.length ? `${item.reading.filter(row => row.status === "complete" || row.status === "cached").length}/${item.reading.length} · ` : ""}{item.status === "running" ? "执行中" : item.status === "error" ? "失败" : item.status === "stopped" ? "已停止" : "完成"}</small><ChevronDown size={13} /></summary>
-        {item.reading?.length ? <ReadingQueue reading={item.reading} /> : null}
-        {item.sourceId && message.traces.filter(trace => trace.id === item.sourceId).map(trace => <div className="agent-operation-evidence" key={trace.id}><small>来源 [{trace.id}]{trace.cached ? " · 缓存复用" : ""}</small><pre>{trace.arguments}</pre><pre>{trace.result}</pre></div>)}
-      </details>)}</div> : <>
-    {!!reading.length && <ReadingQueue reading={reading} />}
-    <ol ref={listRef} onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
-      {rows.map((row, index) => <li key={index} className={running && index === rows.length - 1 ? "current" : ""}><time>{new Date(row.at).toLocaleTimeString()}</time><div><span>{row.label}</span>{row.detail && <p className="agent-process-note">{row.detail}</p>}</div></li>)}
-    </ol>
-    </>}
+    {!!publicRows.length && <div className="agent-service-feed">{publicRows.map(item => <div className="agent-commentary" key={item.id}><AgentMarkdown content={item.text} /></div>)}</div>}
+    <div id={`process-${message.id}`} hidden={!open} className="agent-technical-details">
+      {operations.map(item => <details className={`agent-operation ${item.status ?? "complete"}`} key={item.id}>
+        <summary><span className="agent-tool-icon" aria-hidden="true">›_</span><span>{item.text}</span><small>{item.status === "running" ? "执行中" : item.status === "error" ? "失败" : item.status === "stopped" ? "已停止" : "完成"}{item.sourceId ? ` · [${item.sourceId}]` : ""}</small><ChevronDown size={13} /></summary>
+        {!!item.reading?.length && <ReadingQueue reading={item.reading} />}
+      </details>)}
+      {!operations.length && !!message.reading?.length && <ReadingQueue reading={message.reading} />}
+      <ol>{rows.map((row, index) => <li key={index}><time>{new Date(row.at).toLocaleTimeString()}</time><div><span>{row.label}</span>{row.detail && <p>{row.detail}</p>}</div></li>)}</ol>
+      {message.traces.map(trace => <details className="agent-operation-evidence" key={trace.id}><summary>[{trace.id}] {trace.name}{trace.cached ? " · 缓存复用" : ""}</summary><small>{trace.at}</small><pre>{trace.arguments}</pre><pre>{trace.result}</pre></details>)}
+      {message.usage && <p className="agent-muted">本轮累计 tokens：输入 {message.usage.input.toLocaleString()} · 输出 {message.usage.output.toLocaleString()} · {message.usage.requests ?? 0} 次请求 · 缓存命中 {message.usage.memoryHits ?? 0} 次 · 服务商缓存输入 {message.usage.cachedInput ?? 0}{message.usage.evidenceBytes && <> · 工具证据：正文 {(message.usage.evidenceBytes.content / 1024).toFixed(1)} KB / 统计 {(message.usage.evidenceBytes.statistics / 1024).toFixed(1)} KB（非 token）</>}{message.usage.compactedBytes ? ` · 无损编码减少 ${(message.usage.compactedBytes / 1024).toFixed(1)} KB（非 token）` : ""}</p>}
     </div>
   </section>;
 }
@@ -277,6 +262,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
             if (text.trim()) { const activity = assistant.activity ??= []; activity.push({ id: `legacy:${activity.length}`, kind: "commentary", text: text.slice(0, 6000), at: new Date().toISOString() }); const rows = assistant.progress ??= []; rows.push({ label: "模型执行说明", detail: text.slice(0, 6000), at: new Date().toISOString() }); if (rows.length > 80) rows.shift(); }
             stream.reset(); void persist();
           },
+          onStatus: (status) => { assistant.statusLabel = status; paint(); },
           onProgress: (label) => { const rows = assistant.progress ??= []; if (rows.at(-1)?.label === label) return; rows.push({ label, at: new Date().toISOString() }); if (rows.length > 80) rows.shift(); paint(); },
           onCommentary: (id, text) => {
             if (!assistant.content) assistant.phase = "working";
@@ -350,10 +336,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
         <div className="agent-messages" ref={messagesRef} onScroll={(event) => { const element = event.currentTarget; followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }} role="log" aria-label="聊天消息" aria-live="off">
           {!current?.messages.length && <div className="agent-welcome"><div className="agent-orb"><Bot size={32} /></div><p className="eyebrow">ASK YOUR DATA</p><h2>从一个问题开始，<br />读懂作品背后的变化。</h2><p>把真实采样变成有依据的分析。Agent 可以检索作品、比较增长、查看粉丝趋势，并展示查询来源。</p><div className="agent-preset-row" aria-label="问题分类">{Object.keys(promptGroups).map(category => <button type="button" key={category} aria-pressed={promptCategory === category} onClick={() => setPromptCategory(category)}>{category}</button>)}</div><div className="agent-suggestions">{prompts.map((prompt) => <button type="button" key={prompt} onClick={() => setQuestion(prompt)}>{prompt}<Send size={14} /></button>)}</div></div>}
           {current?.messages.map((message) => <article key={message.id} className={`agent-message ${message.role}`}><div className="agent-message-meta"><strong>{message.role === "user" ? "你" : "Agent"}</strong><span>{message.model}</span>{message.status === "running" && <span role="status">正在分析…</span>}</div><RunProgress message={message} /><div className={`agent-answer ${message.status === "running" ? "agent-live-message" : ""}`}><AgentMarkdown content={message.content} /></div>
-            {message.traces.length > 0 && <details className="agent-sources"><summary>已查询 {message.traces.length} 个来源</summary>{message.traces.map((trace) => <details key={trace.id}><summary>[{trace.id}] {trace.name}{trace.cached ? " · 记忆复用" : ""}</summary><small>{trace.at}</small><pre>{trace.arguments}</pre><pre>{trace.result}</pre></details>)}</details>}
             {!!message.trimmedTurns && <p className="agent-muted">本轮已省略较早的 {message.trimmedTurns} 轮上下文；历史记录仍保留。</p>}
-            {message.usage && (message.usage.input > 0 || message.usage.output > 0) && <p className="agent-muted">本轮累计 tokens：输入 {message.usage.input.toLocaleString()} · 输出 {message.usage.output.toLocaleString()}{message.usage.requests !== undefined && <> · {message.usage.requests} 次请求 · 记忆命中 {message.usage.memoryHits ?? 0} 次 · 服务商缓存输入 {message.usage.cachedInput ?? 0}{message.usage.evidenceBytes && <> · 工具证据：正文 {(message.usage.evidenceBytes.content / 1024).toFixed(1)} KB / 统计 {(message.usage.evidenceBytes.statistics / 1024).toFixed(1)} KB（非 token）</>}</>}</p>}
-            {message.usage?.compactedBytes !== undefined && message.usage.compactedBytes > 0 && <p className="agent-muted">无损编码已减少 {(message.usage.compactedBytes / 1024).toFixed(1)} KB 证据传输（非 token 计费估算）</p>}
             {message.error && <p className="agent-error" role="alert">{message.error}</p>}
             <MessageActions message={message} onError={setError}
               onEdit={() => { setQuestion(message.content); composerRef.current?.focus(); }}

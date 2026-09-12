@@ -68,6 +68,8 @@ export function conversationMarkdown(conversation: Conversation): string {
   return `# ${conversation.title}\n\n` + conversation.messages.map((message) =>
     `## ${message.role === "user" ? "用户" : "Agent"} · ${message.at}\n\n${message.content}\n\n` +
     (message.error ? `状态：${message.error}\n\n` : "") +
+    (message.activity?.some(item => item.kind === "commentary" && !item.id.startsWith("milestone:")) ? "### 分析进展\n\n" + message.activity.filter(item => item.kind === "commentary" && !item.id.startsWith("milestone:")).map(item => item.text).join("\n\n") + "\n\n" : "") +
+    (message.usage ? `用量：输入 ${message.usage.input} / 输出 ${message.usage.output} tokens，${message.usage.requests ?? 0} 次请求。\n\n` : "") +
     message.traces.map((trace) => `### ${trace.id} · ${trace.name}\n\n参数：${trace.arguments}\n\n\`\`\`json\n${trace.result}\n\`\`\`\n`).join("\n")
   ).join("\n");
 }

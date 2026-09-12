@@ -1,4 +1,5 @@
 import type { DashboardData, WorkMetrics, WorkRecord, WorkSample } from "../domain/types";
+import { createTimePatternQuery, TIME_PATTERNS_TOOL } from "./time-patterns";
 import type { ToolDefinition } from "./types";
 
 const METRICS = ["views", "bookmarks", "likes", "comments"] as const;
@@ -11,10 +12,11 @@ function tool(name: string, description: string, properties: Record<string, unkn
 }
 
 export const KNOWLEDGE_TOOLS: ToolDefinition[] = [
+  TIME_PATTERNS_TOOL,
   tool("get_analysis_brief", "One query for portfolio growth top 3, followers, content mix and quality. Prefer for broad analysis; no need to page raw records.", { ...rangeProperties }),
   tool("rank_works", "Rank ALL works by current metric or bookmarkRate; minViews prevents tiny-denominator bias. Returns top rows, no raw scan needed.", { metric: { type: "string", enum: [...METRICS, "bookmarkRate"] }, minViews: integer, offset: integer, limit: { type: "integer", minimum: 1, maximum: 10 } }),
   tool("summarize_groups", "Aggregate ALL works by series or content type, including weighted bookmark conversion and sample sizes. Series is metadata, not a causal explanation.", { by: { type: "string", enum: ["series", "type"] }, offset: integer, limit: { type: "integer", minimum: 1, maximum: 10 } }),
-  tool("get_overview", "Local portfolio totals, metric coverage, time coverage and data definitions. Call first for portfolio questions.", {}),
+  tool("get_overview", "Local portfolio totals, metric coverage, time coverage and data definitions. Use for requested totals, not as a mandatory first step for every analysis.", {}),
   tool("search_works", "Search all works by title, ID, series or description. Returns paginated metadata and current metrics. Empty query matches all.", { query: str, offset: integer, limit: { type: "integer", minimum: 1, maximum: 30 } }),
   tool("get_work_history", "Raw observed metrics for one work; paginated chronologically, no smoothing. Includes actual baseline and growth in requested range.", { workKey: str, ...rangeProperties, offset: integer, limit: { type: "integer", minimum: 1, maximum: 50 } }),
   tool("rank_growth", "Rank all works by measured change over a time range; comparable endpoint pairs only. Missing baselines are excluded; returns coverage and actual endpoints. Negative changes are retained.", { ...rangeProperties, metric: { type: "string", enum: METRICS }, offset: integer, limit: { type: "integer", minimum: 1, maximum: 30 } }),
@@ -52,6 +54,7 @@ const metadata = (work: WorkRecord) => ({ key: work.key, title: work.title.slice
 });
 
 export function createKnowledge(data: DashboardData, isPreview = false) {
+  let temporal: ReturnType<typeof createTimePatternQuery> | undefined;
   const works = new Map(data.works.map((work) => [work.key, work]));
   const samples = new Map<string, WorkSample[]>();
   for (const sample of data.samples) {
@@ -102,6 +105,7 @@ export function createKnowledge(data: DashboardData, isPreview = false) {
     const properties = definition.parameters.properties as Record<string, unknown>;
     if (Object.keys(args).some((key) => !(key in properties)) || Object.keys(properties).some((key) => !(key in args))) throw new Error("Unexpected or missing arguments");
     switch (name) {
+      case "analyze_time_patterns": return (temporal ??= createTimePatternQuery(data))(args);
       case "rank_works": {
         const metric = text(args.metric, "metric");
         if (![...METRICS, "bookmarkRate"].includes(metric) || !Number.isSafeInteger(args.minViews) || Number(args.minViews) < 0) throw new Error("Invalid ranking");

@@ -60,11 +60,11 @@ PixivPulse 将作者自己的作品管理数据保存为本地历史，让你能
 
 ## 安装与升级
 
-当前源码版本：**v0.5.14**（本地构建，尚未发布）。需要 **Chrome 120+**，通过已解压扩展安装。
+当前源码版本：**v0.5.15**（本地构建，尚未发布）。需要 **Chrome 120+**，通过已解压扩展安装。
 
 ### 首次安装
 
-1. 在 [最新 Release](https://github.com/Zenith-Angle/PixivPulse/releases/latest) 下载对应已发布版本的 Chrome ZIP；本地构建 0.5.14 可使用 `.output/pixiv-pulse-0.5.14-chrome.zip`。请选择这个安装包，GitHub 自动生成的 **Source code** 是源码包。
+1. 在 [最新 Release](https://github.com/Zenith-Angle/PixivPulse/releases/latest) 下载对应已发布版本的 Chrome ZIP；本地构建 0.5.15 可使用 `.output/pixiv-pulse-0.5.15-chrome.zip`。请选择这个安装包，GitHub 自动生成的 **Source code** 是源码包。
 2. 将 ZIP 完整解压到准备长期保留的目录，确认目录内有 `manifest.json`。
 3. 打开 Chrome 扩展管理页 `chrome://extensions`，开启“开发者模式”。
 4. 点击“加载已解压的扩展程序”，选择包含 `manifest.json` 的目录。
@@ -78,7 +78,7 @@ PixivPulse 将作者自己的作品管理数据保存为本地历史，让你能
 下载同一 Release 的 `SHA256SUMS.txt`，在 PowerShell 计算 ZIP 的哈希，与文件中的值比较：
 
 ```powershell
-Get-FileHash .\pixiv-pulse-v0.5.14-chrome.zip -Algorithm SHA256
+Get-FileHash .\pixiv-pulse-v0.5.15-chrome.zip -Algorithm SHA256
 ```
 
 </details>
@@ -108,13 +108,14 @@ Get-FileHash .\pixiv-pulse-v0.5.14-chrome.zip -Algorithm SHA256
 
 可以从这些问题开始：
 
+- “一天中哪些时段浏览、收藏和点赞增长更多？区分缺测和零增长。”
 - “最近 7 天哪些作品增长最快？说明采样范围和证据。”
 - “比较这几部作品的收藏转化，区分累计表现与近期变化。”
 - “根据实际读到的片段，给出人物关系与叙事节奏的修改建议。”
 
 回答支持连续追问、来源展开、流式输出、停止、重新生成和 Markdown 导出。小说内容分析需另外开启正文采样；采样有范围限制，模型回答也需要对照来源判断。
 
-详细配置、采样深度、预算与隐私见 [Agent 使用指南](./docs/agent-guide.zh-CN.md)。实现原理与排错见 [Agent 构建教程](./docs/agent-building-tutorial.zh-CN.md)。
+详细配置、采样深度、高效分析与隐私见 [Agent 使用指南](./docs/agent-guide.zh-CN.md)。实现原理与排错见 [Agent 构建教程](./docs/agent-building-tutorial.zh-CN.md)。
 
 ## 数据与隐私
 
@@ -159,7 +160,7 @@ npm run verify
 项目使用 WXT、React、TypeScript、ECharts 和 IndexedDB。`entrypoints/` 负责扩展入口，`src/domain/` 负责业务规则，`src/data/` 与 `src/media/` 管理存储和封面，`src/ui/` 提供看板，`src/agent/` 提供模型协议及分析工具。
 
 - [Agent 使用指南](./docs/agent-guide.zh-CN.md)：连接、授权、采样与常见问题。
-- [Agent 构建与排错教程](./docs/agent-building-tutorial.zh-CN.md)：协议、工具循环、预算、会话和验收。
+- [Agent 构建与排错教程](./docs/agent-building-tutorial.zh-CN.md)：协议、工具循环、上下文、会话和验收。
 - [完整更新日志](./CHANGELOG.md)：按版本查看变化。
 - [第三方许可证](./THIRD_PARTY_NOTICES.md)：运行时依赖的版权与许可。
 

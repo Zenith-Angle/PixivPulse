@@ -5,7 +5,7 @@ import { readMemory, writeMemory, type MemoryEntry } from "./storage";
 const canonical = (args: Record<string, unknown>) => JSON.stringify(Object.fromEntries(Object.entries(args).sort(([a], [b]) => a.localeCompare(b))));
 export async function openKnowledgeMemory(data: DashboardData, preview: boolean, enabled: boolean) {
   // Hash the actual evidence, not counts or sync IDs: imports/corrections must invalidate caches too.
-  const bytes = new TextEncoder().encode(JSON.stringify(["knowledge-v3", preview, data.settings.boundAccount?.id, data.works, data.samples, data.runs, data.accountFollowerSamples]));
+  const bytes = new TextEncoder().encode(JSON.stringify(["knowledge-v4", preview, data.settings.boundAccount?.id, data.works, data.samples, data.observations, data.observationBatches, data.runs, data.accountFollowerSamples]));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const scope = Array.from(new Uint8Array(digest), n => n.toString(16).padStart(2, "0")).join("");
   const entries = new Map<string, MemoryEntry>();

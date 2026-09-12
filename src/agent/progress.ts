@@ -1,4 +1,5 @@
 export const TOOL_LABELS: Record<string, string> = {
+  analyze_time_patterns: "计算时间分布", request_analysis_tools: "展开分析能力",
   report_progress: "说明阶段发现与下一步",
   record_reading_notes: "整理来源笔记并释放旧证据",
   retrieve_evidence: "回查原始来源",

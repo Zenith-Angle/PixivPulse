@@ -6,6 +6,15 @@ import { openKnowledgeMemory } from "./memory";
 import { clearAgentMemory, listConversations, readMemory, writeMemory } from "./storage";
 
 beforeEach(async () => { await deleteDB("pixivpulse-agent"); });
+it("invalidates time aggregates when only observation coverage changes", async () => {
+  const data = createDemoData(), args = { dimension: "hour_of_day", metrics: ["views"], workKeys: [], from: null, to: null, bucketHours: 1, offset: 0, limit: 24 };
+  expect((await (await openKnowledgeMemory(data, true, true)).execute("analyze_time_patterns", args)).cached).toBe(false);
+  expect((await (await openKnowledgeMemory(data, true, true)).execute("analyze_time_patterns", args)).cached).toBe(true);
+  data.observations.push({ workKey: data.works[0]!.key, runId: "new", observedAt: "2026-09-12T10:00:00+08:00", metricsChanged: false });
+  expect((await (await openKnowledgeMemory(data, true, true)).execute("analyze_time_patterns", args)).cached).toBe(false);
+  data.observationBatches = [{ runId: "batch", observedAt: "2026-09-12T11:00:00+08:00", workKeys: [data.works[0]!.key], changedWorkKeys: [], scope: "complete" }];
+  expect((await (await openKnowledgeMemory(data, true, true)).execute("analyze_time_patterns", args)).cached).toBe(false);
+});
 it("reuses facts across runs, invalidates actual corrections and isolates demo and accounts", async () => {
   const data = createDemoData();
   const first = await openKnowledgeMemory(data, false, true);

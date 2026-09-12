@@ -147,4 +147,8 @@
 .agent-operation-evidence { padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
 .agent-operation-evidence pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.agent-latest-milestone { padding: 10px 0; color: var(--ink-soft); font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.agent-workspace .agent-process-toggle { display: inline-flex; align-items: center; gap: 4px; width: auto; padding: 4px 7px; font-size: 11px; }
+.agent-technical-details { margin: 8px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.agent-technical-details[hidden] { display: none; }
+.agent-technical-details .agent-operation-evidence { margin-top: 8px; }
+.agent-service-feed .agent-commentary { margin: 12px 0; }

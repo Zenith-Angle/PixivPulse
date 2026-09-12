@@ -6,6 +6,15 @@ import { DEFAULT_AGENT_CONFIG, type Conversation } from "./types";
 
 beforeEach(async () => { sessionStorage.clear(); await deleteDB("pixivpulse-agent"); });
 describe("Agent local storage", () => {
+  it("exports substantive service feedback and usage without legacy generated tool chatter", () => {
+    const row: Conversation = { id: "feedback", accountId: "a", title: "时段分析", updatedAt: "now", messages: [{ id: "m", role: "assistant", content: "结论", at: "now", status: "complete", traces: [], usage: { input: 123, output: 45 }, activity: [
+      { id: "0:0", kind: "commentary", text: "采样覆盖不足，需要比较更宽的时段。", at: "now" },
+      { id: "milestone:S1", kind: "commentary", text: "已复用来源并完成工具查询。", at: "now" },
+    ] }] };
+    const result = conversationMarkdown(row);
+    expect(result).toContain("采样覆盖不足，需要比较更宽的时段。");
+    expect(result).not.toContain("已复用来源"); expect(result).toContain("123");
+  });
   it("restores public updates and stops only unfinished operation entries", async () => {
     await saveConversation({ id: "activity", accountId: "a", title: "活动", updatedAt: "now", messages: [{ id: "m", role: "assistant", content: "", at: "now", status: "running", traces: [], activity: [
       { id: "p", kind: "commentary", text: "先检查证据。", at: "now" },

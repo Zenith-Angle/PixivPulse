@@ -68,6 +68,7 @@ export interface AgentMessage {
   trimmedTurns?: number;
   progress?: { label: string; at: string; detail?: string }[];
   phase?: "working" | "answering";
+  statusLabel?: string;
   reading?: ReadingProgress[];
   activity?: AgentActivity[];
 }

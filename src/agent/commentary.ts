@@ -2,7 +2,7 @@ import type { ToolDefinition } from "./types";
 
 export const COMMENTARY_TOOL: ToolDefinition = {
   name: "report_progress",
-  description: "Send a brief public progress update to the user, separate from tool operations and the final answer. State the next action or explain a finding supported by tool results already received. Never reveal private reasoning or claim unexecuted work has finished. Prefer calling alongside the next data tool; do not add an extra request solely to repeat a status.",
+  description: "Send a brief public progress update to the user, separate from tool operations and the final answer. Describe the user-relevant question being investigated, an observed finding and its implication, or the next useful action. Never narrate tool names, cached sources, row counts, request completion or internal bookkeeping. Send only when the analysis meaningfully advances, not after each tool. Never reveal private reasoning or claim unexecuted work has finished. Prefer calling alongside the next data tool; do not add an extra request solely to repeat a status.",
   parameters: { type: "object", properties: { message: { type: "string", maxLength: 2000 } }, required: ["message"], additionalProperties: false },
 };
 
