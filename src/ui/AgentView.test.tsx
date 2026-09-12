@@ -37,21 +37,25 @@ describe("Agent workspace", () => {
     expect(saved.activity?.[0]?.text).toBe("先核对记录日期，再判断缺口。");
     expect(saved.content).toBe("已确认的最终结论。");
   });
-  it("restores the last selected conversation on re-entry and remount instead of a new draft", async () => {
+  it("opens a fresh draft on entry, re-entry and remount while retaining selectable history", async () => {
     const data = createDemoData();
-    for (const [id, at] of [["older", "2026-09-01"], ["newer", "2026-09-02"]]) await saveConversation({ id: id!, title: id!, accountId: "preview", updatedAt: at!, messages: [{ id: id!, role: "user", content: `内容 ${id}`, status: "complete", at: at!, traces: [] }] });
+    await saveConversation({ id: "old", title: "旧对话", accountId: "preview", updatedAt: "now", messages: [{ id: "u", role: "user", content: "旧问题", status: "complete", at: "now", traces: [] }] });
+    localStorage.setItem("pixivpulse-agent-selection:preview", "old");
     const view = render(<AgentView data={data} isPreview active />);
-    await screen.findByText("内容 newer");
-    fireEvent.click(screen.getByRole("button", { name: "older" }));
-    await screen.findByText("内容 older");
-    fireEvent.click(screen.getByRole("button", { name: "新对话" }));
-    expect(screen.queryByText("内容 older")).not.toBeInTheDocument();
+    await screen.findByRole("textbox", { name: "向 Agent 提问" });
+    expect(screen.queryByText("旧问题")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "旧对话" }));
+    await screen.findByText("旧问题");
     view.rerender(<AgentView data={data} isPreview active={false} />);
     view.rerender(<AgentView data={data} isPreview active />);
-    await screen.findByText("内容 older");
+    expect(screen.queryByText("旧问题")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "向 Agent 提问" })).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "旧对话" }));
+    await screen.findByText("旧问题");
     view.unmount(); render(<AgentView data={data} isPreview active />);
-    await screen.findByText("内容 older");
-    expect(screen.queryByText("内容 newer")).not.toBeInTheDocument();
+    await screen.findByRole("textbox", { name: "向 Agent 提问" });
+    expect(screen.queryByText("旧问题")).not.toBeInTheDocument();
+    expect(await listConversations("preview")).toHaveLength(1);
   });
   it("copies Markdown, edits drafts and forks historical retries without losing later turns", async () => {
     await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
@@ -64,6 +68,7 @@ describe("Agent workspace", () => {
       hooks.onText("新的第一答");
     });
     render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "原对话" }));
     const answer = (await screen.findByText("第一答")).closest("article")!;
     fireEvent.click(within(answer).getByRole("button", { name: "复制" }));
     await waitFor(() => expect(clipboard).toHaveBeenCalledWith("**第一答**"));
@@ -81,27 +86,17 @@ describe("Agent workspace", () => {
       expect(rows.find(row => row.id !== "original")!.messages.map(row => row.content)).toEqual(["第一问", "新的第一答"]);
     });
   });
-  it("saves custom reading limits and applies recommended budgets to an existing config", async () => {
-    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, inputBudget: 24000, totalInputBudget: 60000 });
+  it("removes legacy budgets from settings and saved config while preserving credentials and reading preferences", async () => {
+    const legacy = { ...DEFAULT_AGENT_CONFIG, apiKey: "retained-key", model: "retained-model", inputBudget: 64000, totalInputBudget: 160000, maxOutputTokens: 512, readingDepth: "deep" as const };
+    await saveAgentConfig(legacy);
     render(<AgentView data={createDemoData()} isPreview />);
     fireEvent.click(await screen.findByRole("button", { name: "连接配置" }));
-    expect(screen.getByRole("textbox", { name: "回答偏好" })).toHaveValue(DEFAULT_AGENT_CONFIG.instructions);
-    fireEvent.change(screen.getByRole("combobox", { name: /^正文阅读深度/ }), { target: { value: "custom" } });
-    fireEvent.change(screen.getByRole("spinbutton", { name: "每篇累计采样字数" }), { target: { value: "2200" } });
-    fireEvent.change(screen.getByRole("spinbutton", { name: /^每篇累计覆盖/ }), { target: { value: "45" } });
-    fireEvent.click(screen.getByRole("button", { name: /^使用推荐输入预算/ }));
+    expect(screen.queryByLabelText(/输入预算|最大输出|上下文窗口/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
     await screen.findByText("连接配置已保存。");
-    expect(await loadAgentConfig()).toMatchObject({ readingDepth: "custom", customReadingChars: 2200, customReadingPercent: 45, inputBudget: 64000, totalInputBudget: 160000 });
-  });
-  it("applies relaxed limits without changing the connection and key", async () => {
-    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "retained-key", model: "retained-model", inputBudget: 64000, totalInputBudget: 160000, maxSteps: 4, readingDepth: "deep" });
-    render(<AgentView data={createDemoData()} isPreview />);
-    fireEvent.click(await screen.findByRole("button", { name: "连接配置" }));
-    fireEvent.click(screen.getByRole("button", { name: "使用宽松设置" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
-    await screen.findByText("连接配置已保存。");
-    expect(await loadAgentConfig()).toMatchObject({ apiKey: "retained-key", model: "retained-model", inputBudget: 0, totalInputBudget: 0, maxSteps: 0, readingDepth: "auto" });
+    const saved = await loadAgentConfig();
+    expect(saved).toMatchObject({ apiKey: "retained-key", model: "retained-model", readingDepth: "deep" });
+    expect(saved).not.toHaveProperty("inputBudget"); expect(saved).not.toHaveProperty("maxOutputTokens");
   });
   it("shows live progress and flushes the last text burst while generation remains open", async () => {
     await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
@@ -142,6 +137,7 @@ describe("Agent workspace", () => {
     expect(saved.content).toBe("保留角色行动的细节。");
     expect(saved.progress).toContainEqual(expect.objectContaining({ detail: "先核对样本范围。" }));
     view.unmount(); render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "比较正文" }));
     fireEvent.click(await screen.findByRole("button", { name: "展开执行过程" }));
     expect(screen.getByText("先核对样本范围。")).toBeVisible();
   });
@@ -175,6 +171,29 @@ describe("Agent workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
     await waitFor(async () => expect((await listConversations("preview")).every(row => row.messages.at(-1)?.status === "stopped")).toBe(true));
   });
+  it("keeps a hidden run alive when re-entry opens a fresh draft", async () => {
+    await saveAgentConfig({ ...DEFAULT_AGENT_CONFIG, apiKey: "test-key" });
+    let finish!: () => void, signal!: AbortSignal;
+    vi.spyOn(runner, "runAgent").mockImplementation(async (_c, _m, _d, _p, value, hooks) => {
+      signal = value;
+      await new Promise<void>(resolve => { finish = resolve; });
+      hooks.onText("后台完成的回答");
+    });
+    const data = createDemoData(), view = render(<AgentView data={data} isPreview active />);
+    fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), { target: { value: "后台任务" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(finish).toBeDefined());
+    view.rerender(<AgentView data={data} isPreview active={false} />);
+    view.rerender(<AgentView data={data} isPreview active />);
+    expect(signal.aborted).toBe(false);
+    expect(screen.getByRole("textbox", { name: "向 Agent 提问" })).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "停止生成" })).not.toBeInTheDocument();
+    finish();
+    await waitFor(async () => expect((await listConversations("preview"))[0]?.messages.at(-1)?.status).toBe("complete"));
+    expect(screen.queryByText("后台完成的回答")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "后台任务" }));
+    expect(await screen.findByText("后台完成的回答")).toBeVisible();
+  });
   it("starts with DeepSeek Responses and requires explicit data sharing", async () => {
     render(<AgentView data={createDemoData()} isPreview />);
     fireEvent.click(await screen.findByRole("button", { name: "连接配置" }));
@@ -202,6 +221,7 @@ describe("Agent workspace", () => {
     const saved = await listConversations("preview");
     expect(saved[0]?.messages[1]).toMatchObject({ status: "complete", content: "基于真实记录 [S1]", traces: [{ id: "S1" }] });
     view.unmount(); render(<AgentView data={createDemoData()} isPreview />);
+    fireEvent.click(await screen.findByRole("button", { name: "请分析收藏" }));
     await screen.findByText("基于真实记录 [S1]");
     fireEvent.click(screen.getByRole("button", { name: "删除对话 请分析收藏" }));
     fireEvent.click(screen.getByRole("button", { name: "确认删除" }));

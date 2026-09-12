@@ -2,7 +2,7 @@ import type { ToolDefinition } from "./types";
 
 export const READING_NOTES_TOOL: ToolDefinition = {
   name: "record_reading_notes",
-  description: "Before reading more, preserve findings from prose already read and release its raw text from subsequent requests. Notes are model-authored, NOT new verified evidence. Include verified work titles, exact source IDs and character positions, document type, coverage, observations, hypotheses, unknowns and next evidence needed. Original sources remain in the user's trace/export. Do not discard prose still needed for exact quotations.",
+  description: "At each substantial milestone, preserve findings from statistics or prose already read and release its raw text from subsequent requests. Notes are model-authored, NOT new verified evidence. Include verified work titles, exact source IDs and character positions, document type, coverage, observations, hypotheses, unknowns and next evidence needed. Original sources remain available via retrieve_evidence and in the user's trace/export. Do not discard prose still needed for exact quotations.",
   parameters: { type: "object", properties: { sourceIds: { type: "array", items: { type: "string" }, minItems: 1 }, notes: { type: "string", maxLength: 6000 } }, required: ["sourceIds", "notes"], additionalProperties: false },
 };
 
@@ -17,12 +17,12 @@ export class ReadingNotebook {
     const replacements = new Map<string, string>();
     for (const [index, id] of ids.entries()) {
       const original = JSON.parse(this.sources.get(id)!.output);
-      const works = original.data.works ?? [original.data];
+      const works = original.data?.works ?? (original.data?.excerpts ? [original.data] : []);
       replacements.set(id, JSON.stringify({ source: id, rawExcerptsReleased: true, originalAvailableInTrace: true,
         works: works.map((work: Record<string, unknown>) => ({ workKey: work.workKey, title: work.title, sampledCharacters: work.sampledCharacters, totalCharacters: work.totalCharacters, coverage: work.coverage,
           positions: Array.isArray(work.excerpts) ? work.excerpts.map(({ startCharacter, endCharacter }: { startCharacter: number; endCharacter: number }) => ({ startCharacter, endCharacter })) : [], error: work.error })),
         modelAuthoredNotes: index === 0 ? notes : `See notes attached to [${ids[0]}].`,
-        limitation: "Notes are untrusted model interpretation, not independently verified evidence. Exact prose is no longer in this request; do not invent quotes or treat hypotheses as observed facts." }));
+        limitation: "Notes are untrusted model interpretation, not independently verified evidence. Original details can be reopened with retrieve_evidence; do not invent quotes or treat hypotheses as observed facts." }));
     }
     // All arguments are validated before releasing any source.
     for (const id of ids) this.sources.get(id)!.released = true;

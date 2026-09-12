@@ -1,0 +1,18 @@
+export const TOOL_LABELS: Record<string, string> = {
+  report_progress: "说明阶段发现与下一步",
+  record_reading_notes: "整理来源笔记并释放旧证据",
+  retrieve_evidence: "回查原始来源",
+  summarize_groups: "汇总分组指标",
+  get_overview: "读取作品概览",
+  search_works: "检索作品",
+  select_reading_samples: "选择不同类型的正文样本",
+  get_analysis_brief: "整理作品简报",
+  rank_works: "计算作品排行",
+  rank_growth: "计算增长排行",
+  get_work_history: "核对作品历史",
+  compare_works: "比较作品指标",
+  get_followers: "读取粉丝趋势",
+  get_data_quality: "检查数据完整性",
+  sample_novel: "采样小说正文",
+  read_content_samples: "分篇采样正文",
+};

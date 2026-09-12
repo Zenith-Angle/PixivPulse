@@ -26,7 +26,8 @@ const server = http.createServer(async (req, res) => {
     let answer;
     if (last?.type === "function_call_output") {
       const result = JSON.parse(last.output);
-      answer = result.ok ? "OK：连接工具回传成功。" : `## 本地协议验收\n\n工具返回 **${(result.data?.workCount ?? result.data?.totalMatches)} 件作品**，来源 [S1]。\n\n这是确定性测试服务，非真实大模型回答。\n\n| 检查 | 结果 |\n| --- | --- |\n| 工具回传 | 成功 |\n| 会话上下文 | ${input.input.length} 条 |`;
+      const count = result.data?.workCount ?? result.data?.totalMatches ?? (result.data?.reusedSource === "S1" ? Number(input.instructions.match(/"workCount":(\d+)/)?.[1]) : undefined);
+      answer = result.ok ? "OK：连接工具回传成功。" : `## 本地协议验收\n\n工具返回 **${count} 件作品**，来源 [S1]。\n\n这是确定性测试服务，非真实大模型回答。\n\n| 检查 | 结果 |\n| --- | --- |\n| 工具回传 | 成功 |\n| 会话上下文 | ${input.input.length} 条 |`;
     } else answer = "普通对话协议验收成功（确定性测试服务）。";
     const parts = answer.match(/.{1,12}|\n/g) ?? [answer];
     let index = 0;

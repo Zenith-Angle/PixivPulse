@@ -23,7 +23,7 @@ const config={...DEFAULT_AGENT_CONFIG,apiKey:key,shareData:true,timeoutSeconds:2
 const report=[];
 for(const question of ['简洁告诉我作品总数、总浏览、总收藏，并引用来源。','简洁告诉我作品总数、总浏览、总收藏，并引用来源。','请用聚合简报分析现有观测范围的增长前三、粉丝净变化和内容类型结构，from 和 to 均用 null。简洁回答并引用来源。']){
  let content='',traces=[],usage;const start=Date.now();
- await runAgent(config,[{id:crypto.randomUUID(),role:'user',content:question,status:'complete',at:new Date().toISOString(),traces:[]}],data,false,AbortSignal.timeout(300000),{onText:t=>content+=t,onTrace:t=>traces.push(t),onBudget:()=>{},onUsage:u=>usage=u});
+ await runAgent(config,[{id:crypto.randomUUID(),role:'user',content:question,status:'complete',at:new Date().toISOString(),traces:[]}],data,false,AbortSignal.timeout(300000),{onText:t=>content+=t,onTrace:t=>traces.push(t),onUsage:u=>usage=u});
  if(!content.includes('[S')||!content.trim()||traces.some(t=>JSON.parse(t.result).error))throw new Error('Invalid evidence/citation');
  if(report.length<2){const normalize=content.replace(/[,，\s]/g,'');for(const n of [data.works.length,...['views','bookmarks'].map(k=>data.works.reduce((n,w)=>n+w.metrics[k],0))])if(!normalize.includes(String(n)))throw new Error('Numeric mismatch');}
  if(report.length===1&&!traces.some(t=>t.cached))throw new Error('Memory was not reused');

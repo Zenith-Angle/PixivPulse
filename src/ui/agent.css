@@ -146,3 +146,5 @@
 .agent-operation .agent-reading { border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; }
 .agent-operation-evidence { padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
 .agent-operation-evidence pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.agent-latest-milestone { padding: 10px 0; color: var(--ink-soft); font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }

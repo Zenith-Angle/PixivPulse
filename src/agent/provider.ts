@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { TOOL_LABELS } from "./progress";
 import { partialCommentary } from "./commentary";
 import type { ChatCompletionMessageParam, ChatCompletionAssistantMessageParam } from "openai/resources/chat/completions";
 import type { ResponseInputItem } from "openai/resources/responses/responses";
@@ -22,7 +23,7 @@ export function safeAgentError(error: unknown): string {
       case 401: case 403: return "认证失败或权限不足，请检查 API key、模型权限和账户状态。";
       case 404: return "找不到 API 端点或模型，请检查 Base URL、协议和模型名称。";
       case 429: return "API 限流或额度不足，请检查账户配额后重试。";
-      case 400: case 422: return "API 拒绝了请求，请检查模型的协议、工具调用、输出参数和上下文限制。";
+      case 400: case 422: return "API 拒绝了请求，请检查模型的协议、工具调用、参数兼容性或服务商上下文限制。";
       default: return error.status ? `API 请求失败（HTTP ${error.status}），请稍后重试。` : "网络连接失败，请检查地址、域名权限和服务可用性。";
     }
   }
@@ -50,7 +51,9 @@ export async function listModels(config: AgentConfig, signal: AbortSignal): Prom
 export async function generateTurn(config: AgentConfig, system: string, chat: WireMessage[], input: ResponseInputItem[], tools: ToolDefinition[], signal: AbortSignal, onText: (text: string) => void, onProgress: (stage: string) => void = () => {}, onCommentary: (index: number, text: string) => void = () => {}): Promise<TurnResult> {
   const abort = new AbortController();
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; abort.abort(); }, config.timeoutSeconds * 1000);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const heartbeat = () => { clearTimeout(timer); timer = setTimeout(() => { timedOut = true; abort.abort(); }, config.timeoutSeconds * 1000); };
+  heartbeat();
   const relay = () => abort.abort();
   signal.addEventListener("abort", relay, { once: true });
   if (signal.aborted) relay();
@@ -61,13 +64,11 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
   const addText = (chunk: string) => {
     progress("正在输出回答");
     text += chunk;
-    if (text.length > 1_000_000) throw new AgentError("回答超出本地安全长度限制，请缩小问题范围。");
     onText(chunk);
   };
   try {
     if (config.protocol === "responses") {
       const stream = await client(config).responses.create({ model: config.model, instructions: system, input, stream: true, store: false,
-        max_output_tokens: config.maxOutputTokens,
         ...(config.temperature === null ? {} : { temperature: config.temperature }),
         ...(tools.length ? { tools: tools.map((tool) => ({ type: "function" as const, ...tool, strict: true })), tool_choice: "auto" as const } : {}),
       }, { signal: abort.signal });
@@ -94,6 +95,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
       };
       progress("模型已连接，等待内容");
       for await (const event of stream) {
+        heartbeat();
         if ((event.type === "response.output_item.added" || event.type === "response.output_item.done") && event.item.type === "function_call") { functions.set(event.output_index, event.item); publicUpdate(event.output_index, event.item); }
         if (event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") {
           const item = functions.get(event.output_index);
@@ -101,7 +103,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
         }
         if (event.type.startsWith("response.reasoning")) progress("模型正在处理问题");
         if (event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") progress("模型正在准备工具调用");
-        if (event.type === "response.output_item.added" && event.item.type === "function_call") progress("模型正在准备工具调用");
+        if (event.type === "response.output_item.added" && event.item.type === "function_call") progress(`模型正在准备：${TOOL_LABELS[event.item.name] ?? "查询分析证据"}`);
         if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") receive(event.output_index ?? 0, event.content_index ?? 0, event.delta, true);
         if (event.type === "response.output_text.done") receive(event.output_index ?? 0, event.content_index ?? 0, event.text);
         if (event.type === "response.refusal.done") receive(event.output_index ?? 0, event.content_index ?? 0, event.refusal);
@@ -111,7 +113,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
         }
         if (event.type === "response.output_item.done") receiveItem(event.item, event.output_index);
         if (event.type === "response.failed" || event.type === "error") throw new AgentError("模型返回生成失败，请重试或更换模型。");
-        if (event.type === "response.incomplete") throw new AgentError("回答未完成（输出上限或服务限制），请提高最大输出或缩小问题范围。");
+        if (event.type === "response.incomplete") throw new AgentError("服务商提前结束了回答，已保留收到的内容；可继续追问尚未完成的部分。");
         if (event.type === "response.completed") {
           const response = event.response;
           if (response.status !== "completed") throw new AgentError("模型响应未完成。");
@@ -127,7 +129,6 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
       return final;
     }
     const stream = await client(config).chat.completions.create({ model: config.model, messages: [{ role: "system", content: system }, ...chat], stream: true,
-      [config.outputParameter]: config.maxOutputTokens,
       ...(config.temperature === null ? {} : { temperature: config.temperature }),
       ...(tools.length ? { tools: tools.map((tool) => ({ type: "function" as const, function: { ...tool, strict: true } })), tool_choice: "auto" as const } : {}),
     }, { signal: abort.signal });
@@ -137,6 +138,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
     let usage = { input: 0, output: 0, cachedInput: 0 };
     progress("模型已连接，等待内容");
     for await (const chunk of stream) {
+      heartbeat();
       if (chunk.usage) usage = { input: chunk.usage.prompt_tokens, output: chunk.usage.completion_tokens, cachedInput: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0 };
       const choice = chunk.choices[0];
       if (!choice) continue;
@@ -145,7 +147,6 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
       if (choice.delta.refusal) addText(choice.delta.refusal);
       const reasoningDelta = (choice.delta as { reasoning_content?: string }).reasoning_content;
       if (reasoningDelta) { reasoning += reasoningDelta; progress("模型正在处理问题"); }
-      if (reasoning.length > 1_000_000) throw new AgentError("模型思考内容超出安全长度限制。");
       for (const call of choice.delta.tool_calls ?? []) {
         progress("模型正在准备工具调用");
         if (!Number.isInteger(call.index) || call.index < 0 || call.index > 15) throw new AgentError("API 返回不兼容的工具调用格式。");
@@ -155,11 +156,12 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
         if (call.function?.arguments) pending.arguments += call.function.arguments;
         if (pending.arguments.length > 20000) throw new AgentError("工具参数过长。");
         calls.set(call.index, pending);
+        if (TOOL_LABELS[pending.name]) progress(`模型正在准备：${TOOL_LABELS[pending.name]}`);
         if (pending.name === "report_progress") { const value = partialCommentary(pending.arguments); if (value) onCommentary(call.index, value); }
       }
     }
     if (!finish) throw new AgentError("响应流提前断开，已保留收到的内容，请重试。");
-    if (finish !== "stop" && finish !== "tool_calls") throw new AgentError("回答被截断或受服务限制，请提高输出上限或缩小问题范围。");
+    if (finish !== "stop" && finish !== "tool_calls") throw new AgentError("服务商截断了回答或限制了生成，已保留收到的内容；可继续追问尚未完成的部分。");
     const completed = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
     const message: ChatCompletionAssistantMessageParam & { reasoning_content?: string } = { role: "assistant", content: text || null,
       ...(completed.length ? { tool_calls: completed.map((call) => ({ id: call.id, type: "function" as const, function: { name: call.name, arguments: call.arguments } })) } : {}),
@@ -167,7 +169,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
     };
     return { text, calls: completed, chat: message, output: [], usage };
   } catch (error) {
-    if (timedOut) throw new AgentError("API 请求超时，已保留收到的内容；可调整请求超时后重试。");
+    if (timedOut) throw new AgentError("API 长时间未返回新内容，已保留收到的内容；可调整无响应超时后重试。");
     throw error;
   } finally { clearTimeout(timer); signal.removeEventListener("abort", relay); }
 }

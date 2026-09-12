@@ -51,9 +51,10 @@ function RunProgress({ message }: { message: AgentMessage }) {
     <div className="agent-progress-header">
       <span className={`agent-progress-dot ${running ? "running" : ""}`} />
       <span className="agent-progress-label" role={running ? "status" : undefined}>{label}{running && ` · 已用时 ${Math.max(0, Math.floor((now - Date.parse(message.at)) / 1000))} 秒`}</span>
-      <small>{message.activity?.length ?? rows.length} 条记录</small>
+      <small>{message.activity?.filter(item => item.kind === "operation" && item.status === "complete").length ?? 0} 项已完成</small>
       <button type="button" className="agent-process-toggle" aria-label={open ? "收起执行过程" : "展开执行过程"} title={open ? "收起执行过程" : "展开执行过程"} aria-expanded={open} aria-controls={`process-${message.id}`} onClick={() => setOpen(value => !value)}>{open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
     </div>
+    {!open && message.activity?.findLast(item => item.kind === "commentary") && <div className="agent-latest-milestone">阶段小结：{message.activity.findLast(item => item.kind === "commentary")!.text}</div>}
     <div id={`process-${message.id}`} hidden={!open}>
     {message.activity?.length ? <div className="agent-activity-feed">{message.activity.map(item => item.kind === "commentary" ?
       <div className="agent-commentary" key={item.id}><AgentMarkdown content={item.text} /></div> :
@@ -114,35 +115,30 @@ function ConnectionSettings({ initial, onSave, onClose }: { initial: AgentConfig
   return <section className="agent-settings" aria-label="Agent 连接配置">
     <header><div><p className="eyebrow">MODEL CONNECTION</p><h2>连接你的模型</h2></div><button type="button" className="icon-button" aria-label="关闭连接配置" onClick={onClose}><X size={18} /></button></header>
     <p className="agent-muted">支持 DeepSeek Responses、OpenAI Responses 和 OpenAI 兼容 Chat Completions。问题与保留的对话上下文直接发送至你配置的服务；更换服务前可先新建对话。</p>
-    <div className="agent-preset-row"><button type="button" disabled={busy} onClick={() => { setDraft({ ...DEFAULT_AGENT_CONFIG, apiKey: "" }); setModels([]); setNotice(""); }}>DeepSeek 官方预设</button><button type="button" disabled={busy} onClick={() => { setDraft({ ...DEFAULT_AGENT_CONFIG, baseUrl: "https://api.openai.com/v1", model: "", contextWindow: 32768, apiKey: "" }); setModels([]); setNotice(""); }}>OpenAI Responses</button><button type="button" disabled={busy} onClick={() => { setDraft({ ...DEFAULT_AGENT_CONFIG, baseUrl: "http://localhost:11434/v1", model: "", contextWindow: 32768, protocol: "chat", outputParameter: "max_tokens", apiKey: "" }); setModels([]); setNotice(""); }}>本地 / 兼容服务</button></div>
+    <div className="agent-preset-row"><button type="button" disabled={busy} onClick={() => { setDraft({ ...DEFAULT_AGENT_CONFIG, apiKey: "" }); setModels([]); setNotice(""); }}>DeepSeek 官方预设</button><button type="button" disabled={busy} onClick={() => { setDraft({ ...DEFAULT_AGENT_CONFIG, baseUrl: "https://api.openai.com/v1", model: "", apiKey: "" }); setModels([]); setNotice(""); }}>OpenAI Responses</button><button type="button" disabled={busy} onClick={() => { setDraft({ ...DEFAULT_AGENT_CONFIG, baseUrl: "http://localhost:11434/v1", model: "", protocol: "chat", apiKey: "" }); setModels([]); setNotice(""); }}>本地 / 兼容服务</button></div>
     <form onSubmit={(event) => { event.preventDefault(); void action("save"); }}>
+      <p className="agent-muted">不设置输入、累计用量或输出预算。通过渐进采样、无损数据编码和可回查笔记减少重复传输；实际用量仍会显示。</p>
       <fieldset disabled={busy} className="agent-config-grid">
         <label className="agent-wide">Base URL<input value={draft.baseUrl} onChange={(e) => { setDraft((current) => ({ ...current, baseUrl: e.target.value, apiKey: "" })); setModels([]); setNotice(""); }} placeholder="https://api.deepseek.com" autoComplete="off" /><small>保留服务商要求的路径（例如 /v1）；末尾 /responses 或 /chat/completions 会自动规范化。修改地址后请重新输入密钥。</small></label>
         <label>API 协议<select value={draft.protocol} onChange={(e) => update("protocol", e.target.value as AgentConfig["protocol"])}><option value="responses">Responses API</option><option value="chat">Chat Completions（兼容）</option></select></label>
         <label>Model name<input list="agent-model-list" value={draft.model} onChange={(e) => update("model", e.target.value)} placeholder="填写服务商的模型 ID" autoComplete="off" /><datalist id="agent-model-list">{models.map((model) => <option key={model} value={model} />)}</datalist></label>
         <label className="agent-wide">API key<input type="password" value={draft.apiKey} onChange={(e) => update("apiKey", e.target.value)} autoComplete="new-password" spellCheck={false} placeholder="本地无认证服务可留空" /></label>
-        <label>上下文窗口（tokens）<input type="number" min={4096}  step={1} value={draft.contextWindow} onChange={(e) => update("contextWindow", Number(e.target.value))} /></label>
-        <label>最大输出（tokens）<input type="number" min={128}  value={draft.maxOutputTokens} onChange={(e) => update("maxOutputTokens", Number(e.target.value))} /></label>
         <label>分析侧重<select value={draft.analysisFocus} onChange={(e) => update("analysisFocus", e.target.value as AgentConfig["analysisFocus"])}><option value="auto">自动：按问题选择</option><option value="content">正文优先</option><option value="metrics">指标优先</option></select></label>
         <label>正文阅读深度<select value={draft.readingDepth} onChange={(e) => update("readingDepth", e.target.value as AgentConfig["readingDepth"])}><option value="auto">自动：少量采样，按需补读</option><option value="light">轻量：最多 1,500 字 / 30%</option><option value="standard">标准：最多 3,000 字 / 50%</option><option value="deep">深入：最多 6,000 字 / 70%</option><option value="custom">自定义</option></select><small>自动档每次每篇最多约 3,000 字符，按需补读未读位置；整理阅读笔记后释放旧正文，完整来源仍可查看。</small></label>
         {draft.readingDepth === "custom" && <>
           <label>每篇累计采样字数<input type="number" min={150}  step={1} value={draft.customReadingChars} onChange={(e) => update("customReadingChars", Number(e.target.value))} /></label>
-          <label>每篇累计覆盖上限（%）<input type="number" min={1} max={100} step={1} value={draft.customReadingPercent} onChange={(e) => update("customReadingPercent", Number(e.target.value))} /><small>字数、比例、剩余上下文取最小值；可设置至 100%。</small></label>
+          <label>每篇累计覆盖上限（%）<input type="number" min={1} max={100} step={1} value={draft.customReadingPercent} onChange={(e) => update("customReadingPercent", Number(e.target.value))} /><small>按所选字数和比例采样；可设置至 100%。</small></label>
         </>}
-        <label>单次输入预算（保守估算）<input type="number" min={0} value={draft.inputBudget} onChange={(e) => update("inputBudget", Number(e.target.value))} /><small>0 = 不设额外上限，按模型上下文窗口分配。</small></label>
-        <label>单问累计输入预算（保守估算）<input type="number" min={0} value={draft.totalInputBudget} onChange={(e) => update("totalInputBudget", Number(e.target.value))} /><small>0 = 不设累计上限；实际用量仍会显示。</small></label>
-        <div className="agent-wide"><button type="button" onClick={() => setDraft(current => ({ ...current, inputBudget: 64000, totalInputBudget: 160000 }))}>使用推荐输入预算（64,000 / 160,000）</button><button type="button" onClick={() => setDraft(current => ({ ...current, inputBudget: 0, totalInputBudget: 0, maxSteps: 0, readingDepth: "auto" }))}>使用宽松设置</button><small className="agent-muted">保留连接与密钥，只移除应用的额外输入、累计和轮数上限，阅读采用渐进采样。模型上下文、服务额度及网站冷却仍然有效。</small></div>
-        <label>工具调用轮数<input type="number" min={0} value={draft.maxSteps} onChange={(e) => update("maxSteps", Number(e.target.value))} /><small>0 = 自动继续；无新证据或上下文不足时结束，也可随时停止。</small></label>
-        <label>请求超时（秒）<input type="number" min={10} max={86400} value={draft.timeoutSeconds} onChange={(e) => update("timeoutSeconds", Number(e.target.value))} /></label>
+        <label>工具调用轮数<input type="number" min={0} value={draft.maxSteps} onChange={(e) => update("maxSteps", Number(e.target.value))} /><small>0 = 自动继续；连续重复查询没有新证据时结束，也可随时停止。</small></label>
+        <label>无响应超时（秒）<input type="number" min={10} max={86400} value={draft.timeoutSeconds} onChange={(e) => update("timeoutSeconds", Number(e.target.value))} /></label>
         <label>Temperature（可留空）<input type="number" min={0} max={2} step={0.1} value={draft.temperature ?? ""} placeholder="由模型决定" onChange={(e) => update("temperature", e.target.value === "" ? null : Number(e.target.value))} /></label>
-        {draft.protocol === "chat" && <label>输出上限参数<select value={draft.outputParameter} onChange={(e) => update("outputParameter", e.target.value as AgentConfig["outputParameter"])}><option value="max_completion_tokens">max_completion_tokens</option><option value="max_tokens">max_tokens（传统兼容）</option></select></label>}
         <label className="agent-wide">回答偏好<textarea rows={3} maxLength={6000} value={draft.instructions} onChange={(e) => update("instructions", e.target.value)} placeholder="例如：先给结论，再解释依据；侧重 Pixiv 同人小说的人物关系与叙事节奏。" /></label>
         <label className="agent-check agent-wide"><input type="checkbox" checked={draft.sampleOriginals} onChange={(e) => update("sampleOriginals", e.target.checked)} /><span>允许按需采样 Pixiv 小说原文<small>仅在数据分享开启时使用。优先复用片段缓存；渐进阅读用当前 Pixiv 登录态读取同一正文接口，不新建标签页；按问题要求读取多篇作品，逐篇展示队列与状态。自动档少量多次采样，不设每问固定篇数或累计覆盖比例上限；短篇可能覆盖全文。读取过程遵守网站请求间隔与冷却，片段按配置缓存。</small></span></label>
         <label className="agent-check agent-wide"><input type="checkbox" checked={draft.memoryEnabled} onChange={(e) => update("memoryEnabled", e.target.checked)} /><span>自动复用本地分析证据<small>仅缓存只读工具结果，数据或账号变化即失效，24 小时过期；最多 40 条 / 256 KB，不保存模型推断。关闭数据分享后不会发送这些证据。</small></span></label>
         <label className="agent-check agent-wide"><input type="checkbox" checked={draft.rememberKey} onChange={(e) => update("rememberKey", e.target.checked)} /><span>在本机记住 API key<small>默认仅保留在当前标签页。勾选后以未加密形式保存在扩展本地数据库，不进入作品备份或对话导出。</small></span></label>
         <label className="agent-check agent-wide"><input type="checkbox" checked={draft.shareData} onChange={(e) => update("shareData", e.target.checked)} /><span>允许 Agent 查询本地作品和历史数据<small>提问时，模型按需获取作品标题、简介、指标、采样时间及粉丝统计，并发送至上方 API 服务。关闭后仅进行普通对话。</small></span></label>
       </fieldset>
-      <p className="agent-muted">输入预算按保守 UTF-8 字节估算（并非账单 token 数）；单问累计预算包含每次重放的上下文，并预留最后一次总结。模型上下文窗口只决定容量，不代表每次都要用满。超长会话逐轮省略较早对话，不修改已保存的记录。模型实际窗口请以服务商为准。</p>
+      <p className="agent-muted">实际用量用于展示，不参与拦截。服务商仍有自己的上下文容量和默认输出上限；无响应超时只在长时间收不到新内容时停止请求。</p>
       {error && <p className="agent-error" role="alert">{error}</p>}{notice && <p className="agent-success" role="status"><Check size={15} />{notice}</p>}
       <div className="agent-settings-actions"><button type="submit" className="agent-primary" disabled={busy}>保存配置</button><button type="button" disabled={busy} onClick={() => { void clearAgentMemory().then(() => setNotice("本地证据记忆已清除；进行中的分析结束后仍可能写入新证据。"), () => setError("无法清除记忆，请检查本地存储。")); }}>清除证据记忆</button><button type="button" disabled={busy} onClick={() => void action("test")}>测试连接与工具调用</button><button type="button" disabled={busy} onClick={() => void action("models")}>获取模型列表</button>{busy && <button type="button" onClick={() => abortRef.current?.abort()}>停止测试</button>}</div>
       <p className="agent-muted">测试会向所选模型发送两次简短请求，不发送作品数据，可能产生 API 费用。模型列表接口不可用时仍可手动填写。</p>
@@ -156,8 +152,6 @@ export function AgentView({ data, isPreview, active = true }: { data: DashboardD
 }
 
 function AgentWorkspace({ data, isPreview, accountId, active }: { data: DashboardData; isPreview: boolean; accountId: string; active: boolean }) {
-  const selectionKey = `pixivpulse-agent-selection:${accountId}`;
-  const readSelection = () => { try { return localStorage.getItem(selectionKey); } catch { return null; } };
   const [config, setConfig] = useState(DEFAULT_AGENT_CONFIG);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -184,29 +178,28 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
     let active = true;
     Promise.all([loadAgentConfig(), listConversations(accountId)]).then(([loadedConfig, rows]) => {
       if (!active) return;
-      setConfig(loadedConfig); setConversations(rows); setSelectedId(rows.find(row => row.id === readSelection())?.id ?? rows[0]?.id ?? null); setReady(true);
+      setConfig(loadedConfig); setConversations(rows); setSelectedId(null); setReady(true);
     }).catch(() => { if (active) setError("无法读取 Agent 本地存储，请检查浏览器是否允许 IndexedDB，然后刷新页面。"); });
     return () => { active = false; controllers.current.forEach(controller => controller.abort()); };
   }, [accountId]);
 
-  useEffect(() => {
-    if (ready && selectedId) { try { localStorage.setItem(selectionKey, selectedId); } catch { /* Selection can still be kept in this mounted workspace. */ } }
-  }, [ready, selectedId, selectionKey]);
   const wasActive = useRef(active);
   useLayoutEffect(() => {
     if (active && !wasActive.current) {
       setSettings(false);
-      if (!selectedId) setSelectedId(conversations.find(row => row.id === readSelection())?.id ?? conversations[0]?.id ?? null);
+      setSelectedId(null);
+      setDrafts(rows => ({ ...rows, new: "" }));
+      setError("");
       followOutput.current = true;
       const container = messagesRef.current;
-      if (container) container.scrollTop = container.scrollHeight;
+      if (container) container.scrollTop = 0;
     }
     wasActive.current = active;
   }, [active, selectedId, conversations]);
   useEffect(() => { followOutput.current = true; }, [selectedId]);
   useEffect(() => {
     const container = messagesRef.current;
-    if (active && container && followOutput.current) container.scrollTop = container.scrollHeight;
+    if (active && container && followOutput.current) container.scrollTop = current?.messages.length ? container.scrollHeight : 0;
   }, [active, ready, settings, selectedId, current?.messages.at(-1)?.content, current?.messages.at(-1)?.traces.length, current?.messages.at(-1)?.progress?.length, current?.messages.at(-1)?.activity?.at(-1)?.text, current?.messages.at(-1)?.activity?.length, current?.messages.at(-1)?.phase]);
   useEffect(() => {
     if (!runningIds.length) return;
@@ -216,7 +209,12 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
   }, [runningIds.length]);
 
   function display(conversation: Conversation, streamedText?: string) {
-    const copy = structuredClone(conversation);
+    // Snapshot only mutable UI containers. Large, immutable source strings and
+    // completed messages can be shared instead of cloned on every token delta.
+    const copy = { ...conversation, messages: conversation.messages.map((message, index) => index < conversation.messages.length - 1 ? message : {
+      ...message, traces: [...message.traces], progress: message.progress?.slice() ?? [], reading: message.reading?.slice() ?? [],
+      activity: message.activity?.map(item => ({ ...item, reading: item.reading?.slice() ?? [] })) ?? [],
+    }) };
     if (streamedText !== undefined) copy.messages.at(-1)!.content = streamedText;
     setConversations((rows) => [copy, ...rows.filter((row) => row.id !== copy.id)]);
   }
@@ -239,7 +237,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
       conversation.messages = conversation.messages.slice(0, userIndex);
     }
     const user: AgentMessage = { id: crypto.randomUUID(), role: "user", content: prompt, at: new Date().toISOString(), status: "complete", traces: [] };
-    const assistant: AgentMessage = { id: crypto.randomUUID(), role: "assistant", content: "", at: new Date().toISOString(), status: "running", traces: [], model: checked.model };
+    const assistant: AgentMessage = { id: crypto.randomUUID(), role: "assistant", content: "", at: new Date().toISOString(), status: "running", traces: [], model: checked.model, progress: [{ label: "正在启动分析，准备检查数据与连接", at: new Date().toISOString() }] };
     conversation.messages.push(user, assistant);
     setError("");
     const abort = new AbortController(); controllers.current.set(conversation.id, abort);
@@ -247,7 +245,8 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
     if (!retryMessageId) setQuestion("");
     setSelectedId(conversation.id); setSettings(false); display(conversation);
     let visibleContent = "";
-    const paint = () => display(conversation, visibleContent);
+    let paintTimer: ReturnType<typeof setTimeout> | undefined;
+    const paint = () => { if (!paintTimer) paintTimer = setTimeout(() => { paintTimer = undefined; display(conversation, visibleContent); }, 40); };
     const stream = createTextStream(text => { visibleContent = text; paint(); }, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
     let saveQueue = Promise.resolve();
     let saveFailed = false;
@@ -284,7 +283,6 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
             const rows = assistant.activity ??= []; const item = rows.find(row => row.id === id);
             if (item?.text === text) return;
             if (item) item.text = text; else rows.push({ id, kind: "commentary", text, at: new Date().toISOString() });
-            if (rows.length > 200) rows.shift();
             paint();
             if (Date.now() - lastSave > 1500) { void persist(); lastSave = Date.now(); }
           },
@@ -292,7 +290,6 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
             if (event.status === "running") assistant.phase = "working";
             const rows = assistant.activity ??= []; const index = rows.findIndex(row => row.id === event.id);
             if (index < 0) rows.push(event); else rows[index] = { ...rows[index], ...event };
-            if (rows.length > 200) rows.shift();
             paint();
           },
           onReading: (event) => {
@@ -305,7 +302,6 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
             if (["complete", "cached", "error", "skipped"].includes(event.status)) void persist();
           },
           onTrace: async (trace) => { assistant.traces.push(trace); paint(); await persist(); },
-          onBudget: (trimmed) => { assistant.trimmedTurns = trimmed; },
           onUsage: (usage) => { assistant.usage = usage; },
         });
         await stream.drain();
@@ -325,7 +321,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
       assistant.status = "error"; assistant.error = "对话未能启动，请查看上方提示。"; display(conversation);
       setError((e as Error).message === "stale-conversation" ? "此对话已在另一标签页更新，请刷新后再继续。" : (e as Error).message === "conversation-locked" ? "此对话正在另一标签页生成，请等待完成后刷新。" : "无法启动对话，请检查本地存储后重试。");
     } finally {
-      stream.dispose();
+      stream.dispose(); clearTimeout(paintTimer);
       if (saveFailed) setError("对话保存失败，生成已停止。请立即导出当前对话，并检查本地存储空间。");
       controllers.current.delete(conversation.id); setRunningIds([...controllers.current.keys()]);
     }
@@ -345,7 +341,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
 
   if (!ready) return <section className="agent-empty" role="status">{error || "正在读取 Agent 工作区…"}</section>;
   return <div className="agent-workspace">
-    <aside className="agent-history" aria-label="对话历史"><button className="agent-new" type="button" onClick={() => { setSelectedId(null); setSettings(false); setError(""); }}><Plus size={16} />新对话</button><p className="eyebrow">本机对话 · 当前账号</p><div className="agent-conversation-list">{conversations.map((conversation) => <div className={`agent-conversation ${selectedId === conversation.id ? "active" : ""}`} key={conversation.id}><button type="button" onClick={() => { setSelectedId(conversation.id); setSettings(false); setError(""); }}><MessageSquare size={14} /><span>{conversation.title}{runningIds.includes(conversation.id) && <small> · 生成中</small>}</span></button><button type="button" disabled={runningIds.includes(conversation.id)} aria-label={`删除对话 ${conversation.title}`} onClick={() => setDeleteId(conversation.id)}><Trash2 size={13} /></button></div>)}</div><p className="agent-muted">记录只保存在此浏览器。切换看板可继续生成；关闭标签页会中断。</p></aside>
+    <aside className="agent-history" aria-label="对话历史"><button className="agent-new" type="button" onClick={() => { setSelectedId(null); setDrafts(rows => ({ ...rows, new: "" })); setSettings(false); setError(""); }}><Plus size={16} />新对话</button><p className="eyebrow">本机对话 · 当前账号</p><div className="agent-conversation-list">{conversations.map((conversation) => <div className={`agent-conversation ${selectedId === conversation.id ? "active" : ""}`} key={conversation.id}><button type="button" onClick={() => { setSelectedId(conversation.id); setSettings(false); setError(""); }}><MessageSquare size={14} /><span>{conversation.title}{runningIds.includes(conversation.id) && <small> · 生成中</small>}</span></button><button type="button" disabled={runningIds.includes(conversation.id)} aria-label={`删除对话 ${conversation.title}`} onClick={() => setDeleteId(conversation.id)}><Trash2 size={13} /></button></div>)}</div><p className="agent-muted">记录只保存在此浏览器。切换看板可继续生成；关闭标签页会中断。</p></aside>
     <section className="agent-main" aria-label="Agent 对话">
       <header className="agent-toolbar"><div><Bot size={20} /><span><strong>你的创作分析搭档</strong><small>{config.model || "尚未配置模型"} · {config.protocol === "responses" ? "Responses" : "Chat Completions"}</small></span></div><div><button type="button" onClick={() => setSettings(!settings)}><Settings2 size={16} />连接配置</button><button type="button" disabled={!current} aria-label="导出当前对话" onClick={() => { if (current && !triggerDownload(conversationMarkdown(current), `PixivPulse-chat-${current.id}.md`, "text/markdown;charset=utf-8")) setError("导出失败，请检查浏览器下载权限。"); }}><Download size={16} /></button></div></header>
       {error && <p className="agent-error" role="alert">{error}</p>}
@@ -357,6 +353,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
             {message.traces.length > 0 && <details className="agent-sources"><summary>已查询 {message.traces.length} 个来源</summary>{message.traces.map((trace) => <details key={trace.id}><summary>[{trace.id}] {trace.name}{trace.cached ? " · 记忆复用" : ""}</summary><small>{trace.at}</small><pre>{trace.arguments}</pre><pre>{trace.result}</pre></details>)}</details>}
             {!!message.trimmedTurns && <p className="agent-muted">本轮已省略较早的 {message.trimmedTurns} 轮上下文；历史记录仍保留。</p>}
             {message.usage && (message.usage.input > 0 || message.usage.output > 0) && <p className="agent-muted">本轮累计 tokens：输入 {message.usage.input.toLocaleString()} · 输出 {message.usage.output.toLocaleString()}{message.usage.requests !== undefined && <> · {message.usage.requests} 次请求 · 记忆命中 {message.usage.memoryHits ?? 0} 次 · 服务商缓存输入 {message.usage.cachedInput ?? 0}{message.usage.evidenceBytes && <> · 工具证据：正文 {(message.usage.evidenceBytes.content / 1024).toFixed(1)} KB / 统计 {(message.usage.evidenceBytes.statistics / 1024).toFixed(1)} KB（非 token）</>}</>}</p>}
+            {message.usage?.compactedBytes !== undefined && message.usage.compactedBytes > 0 && <p className="agent-muted">无损编码已减少 {(message.usage.compactedBytes / 1024).toFixed(1)} KB 证据传输（非 token 计费估算）</p>}
             {message.error && <p className="agent-error" role="alert">{message.error}</p>}
             <MessageActions message={message} onError={setError}
               onEdit={() => { setQuestion(message.content); composerRef.current?.focus(); }}
@@ -365,7 +362,7 @@ function AgentWorkspace({ data, isPreview, accountId, active }: { data: Dashboar
               onExport={() => { const index = current.messages.findIndex(row => row.id === message.id); const start = current.messages.slice(0, index).findLastIndex(row => row.role === "user"); if (!triggerDownload(conversationMarkdown({ ...current, messages: current.messages.slice(Math.max(0, start), index + 1) }), `PixivPulse-turn-${message.id}.md`, "text/markdown;charset=utf-8")) setError("导出失败，请检查浏览器下载权限。"); }} />
           </article>)}
         </div>
-        <div className={`agent-composer-slot ${composerExpanded ? "expanded" : ""}`}><form className="agent-composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void submit(); }}><button className="agent-expand" type="button" aria-label={composerExpanded ? "收起输入框" : "向上展开输入框"} title={composerExpanded ? "收起输入框" : "向上展开输入框"} aria-expanded={composerExpanded} aria-controls="agent-question" onClick={() => setComposerExpanded(value => !value)}>{composerExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}</button><textarea id="agent-question" ref={composerRef} aria-label="向 Agent 提问" value={question} maxLength={30000} rows={2} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy) void submit(); } }} placeholder="问问作品增长、转化率或创作方向…" disabled={busy} /><div><small>Enter 发送 · Shift + Enter 换行 · 回答可能有误，请核对来源</small>{busy ? <button type="button" className="agent-primary" onClick={() => { if (selectedId) controllers.current.get(selectedId)?.abort(); }}><Square size={14} />停止生成</button> : <span>{current?.messages.at(-1)?.role === "assistant" && <button type="button" onClick={() => void submit(current.messages.at(-1)!.id)}>重新生成</button>}<button type="submit" className="agent-primary" disabled={!question.trim()}><Send size={15} />发送</button></span>}</div></form></div>
+        <div className={`agent-composer-slot ${composerExpanded ? "expanded" : ""}`}><form className="agent-composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void submit(); }}><button className="agent-expand" type="button" aria-label={composerExpanded ? "收起输入框" : "向上展开输入框"} title={composerExpanded ? "收起输入框" : "向上展开输入框"} aria-expanded={composerExpanded} aria-controls="agent-question" onClick={() => setComposerExpanded(value => !value)}>{composerExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}</button><textarea id="agent-question" ref={composerRef} aria-label="向 Agent 提问" value={question} rows={2} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy) void submit(); } }} placeholder="问问作品增长、转化率或创作方向…" disabled={busy} /><div><small>Enter 发送 · Shift + Enter 换行 · 回答可能有误，请核对来源</small>{busy ? <button type="button" className="agent-primary" onClick={() => { if (selectedId) controllers.current.get(selectedId)?.abort(); }}><Square size={14} />停止生成</button> : <span>{current?.messages.at(-1)?.role === "assistant" && <button type="button" onClick={() => void submit(current.messages.at(-1)!.id)}>重新生成</button>}<button type="submit" className="agent-primary" disabled={!question.trim()}><Send size={15} />发送</button></span>}</div></form></div>
       </>}
     </section>
     {deleteId && <div className="agent-confirm" role="dialog" aria-modal="true" aria-label="删除对话确认"><div><h3>删除这段对话？</h3><p>仅删除本机对话记录，不影响作品数据。此操作无法撤销。</p><button type="button" onClick={() => setDeleteId(null)}>取消</button><button type="button" className="danger-button" onClick={() => void removeConversation(deleteId)}>确认删除</button></div></div>}

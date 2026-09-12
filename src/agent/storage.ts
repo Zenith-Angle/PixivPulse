@@ -37,7 +37,7 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
 export async function saveAgentConfig(config: AgentConfig): Promise<void> {
   const db = await database();
   try {
-    await db.put("config", { ...config, apiKey: config.rememberKey ? config.apiKey : "" }, "connection");
+    await db.put("config", { ...restoreConfig(config), apiKey: config.rememberKey ? config.apiKey : "" }, "connection");
     if (config.rememberKey) sessionStorage.removeItem(SESSION_KEY);
     else sessionStorage.setItem(SESSION_KEY, JSON.stringify({ baseUrl: config.baseUrl, key: config.apiKey }));
   } finally { db.close(); }

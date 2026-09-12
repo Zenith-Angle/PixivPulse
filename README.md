@@ -60,11 +60,11 @@ PixivPulse 将作者自己的作品管理数据保存为本地历史，让你能
 
 ## 安装与升级
 
-当前版本：**v0.5.13**。需要 **Chrome 120+**，通过已解压扩展安装。
+当前源码版本：**v0.5.14**（本地构建，尚未发布）。需要 **Chrome 120+**，通过已解压扩展安装。
 
 ### 首次安装
 
-1. 在 [最新 Release](https://github.com/Zenith-Angle/PixivPulse/releases/latest) 下载 `pixiv-pulse-v0.5.13-chrome.zip`。请选择这个安装包，GitHub 自动生成的 **Source code** 是源码包。
+1. 在 [最新 Release](https://github.com/Zenith-Angle/PixivPulse/releases/latest) 下载对应已发布版本的 Chrome ZIP；本地构建 0.5.14 可使用 `.output/pixiv-pulse-0.5.14-chrome.zip`。请选择这个安装包，GitHub 自动生成的 **Source code** 是源码包。
 2. 将 ZIP 完整解压到准备长期保留的目录，确认目录内有 `manifest.json`。
 3. 打开 Chrome 扩展管理页 `chrome://extensions`，开启“开发者模式”。
 4. 点击“加载已解压的扩展程序”，选择包含 `manifest.json` 的目录。
@@ -78,7 +78,7 @@ PixivPulse 将作者自己的作品管理数据保存为本地历史，让你能
 下载同一 Release 的 `SHA256SUMS.txt`，在 PowerShell 计算 ZIP 的哈希，与文件中的值比较：
 
 ```powershell
-Get-FileHash .\pixiv-pulse-v0.5.13-chrome.zip -Algorithm SHA256
+Get-FileHash .\pixiv-pulse-v0.5.14-chrome.zip -Algorithm SHA256
 ```
 
 </details>

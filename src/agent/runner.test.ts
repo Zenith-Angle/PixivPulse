@@ -11,15 +11,61 @@ const user: AgentMessage = { id: "u1", role: "user", content: "分析作品集",
 const response = (output: unknown[], inputTokens = 12) => ({ type: "response.completed", response: { id: "r1", object: "response", status: "completed", output, usage: { input_tokens: inputTokens, output_tokens: 4 } } });
 const message = (text: string) => ({ id: "m1", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] });
 const sse = (events: unknown[]) => new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
-const hooks = () => ({ onText: vi.fn(), onTrace: vi.fn(), onBudget: vi.fn(), onUsage: vi.fn() });
+const hooks = () => ({ onText: vi.fn(), onTrace: vi.fn(), onUsage: vi.fn() });
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("Agent protocol and execution acceptance", () => {
-  it("requires a reading checkpoint at the working-set threshold and resumes without a new question", async () => {
+  it.each(["responses", "chat"] as const)("checkpoints large evidence once, reuses stable sources and reopens originals with %s", async protocol => {
+    const data = createDemoData(), work = data.works[0]!;
+    data.works = Array.from({ length: 30 }, (_, index) => ({ ...work, key: `k${index}`, title: `作品${index}` + "长".repeat(160), description: "文".repeat(600) }));
+    const notes = "[S2] 已核对30件作品的目录；数据关联不证明因果，接下来回查原始描述。";
+    const calls = [
+      ["search_works", { query: "", offset: 0, limit: 30 }],
+      ["record_reading_notes", { sourceIds: ["S2"], notes }],
+      ["search_works", { limit: 30, query: "", offset: 0 }],
+      ["retrieve_evidence", { sourceId: "S2", offset: 0, limit: 12000 }],
+    ] as const;
+    let step = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      const next = calls[step++];
+      if (!next) return protocol === "responses" ? sse([response([message("已回查来源 [S2]。")])]) : sse([{ choices: [{ index: 0, delta: { content: "已回查来源 [S2]。" }, finish_reason: "stop" }] }]);
+      const [name, args] = next, id = `call${step}`;
+      return protocol === "responses" ? sse([response([{ type: "function_call", id, call_id: id, name, arguments: JSON.stringify(args) }])])
+        : sse([{ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: "tool_calls" }] }]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const events = { ...hooks(), onCommentary: vi.fn() };
+    await runAgent({ ...config, protocol, analysisFocus: "metrics", memoryEnabled: false }, [user], data, false, new AbortController().signal, events);
+    const traces = events.onTrace.mock.calls.map(([trace]) => trace);
+    expect(traces).toHaveLength(5);
+    expect(JSON.parse(traces[1]!.result).data.rows).toHaveLength(30);
+    expect(JSON.parse(traces[3]!.result).data.reusedSource).toBe("S2");
+    expect(JSON.parse(traces[4]!.result).data.text).toBe(Array.from(traces[1]!.result as string).slice(0, 12000).join(""));
+    const before = JSON.parse(fetchMock.mock.calls[1]![1].body), after = JSON.parse(fetchMock.mock.calls[2]![1].body);
+    const beforeContext = JSON.stringify(before.input ?? before.messages), afterContext = JSON.stringify(after.input ?? after.messages);
+    expect(afterContext.length).toBeLessThan(beforeContext.length / 2);
+    expect(afterContext.split(notes).length - 1).toBe(1);
+    expect(events.onCommentary.mock.calls.filter(([id]) => id.startsWith("milestone:"))).toHaveLength(4);
+    expect(events.onCommentary).toHaveBeenCalledWith("milestone:S3", expect.stringContaining("可回查的笔记"));
+    expect(events.onText).toHaveBeenCalledWith("已回查来源 [S2]。");
+  });
+  it.each(["responses", "chat"] as const)("ignores legacy budgets and sends long questions without output caps with %s", async protocol => {
+    const fetchMock = vi.fn().mockImplementation(async () => protocol === "responses"
+      ? sse([response([message("完整完成")])])
+      : sse([{ choices: [{ index: 0, delta: { content: "完整完成" }, finish_reason: "stop" }] }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const question = "请逐项分析这些问题。".repeat(6000);
+    const legacy = { ...config, protocol, inputBudget: 8000, totalInputBudget: 16000, contextWindow: 8192, maxOutputTokens: 512 };
+    await runAgent(legacy, [{ ...user, content: question }], createDemoData(), false, new AbortController().signal, hooks());
+    const sent = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    expect(JSON.stringify(sent)).toContain(question);
+    for (const key of ["max_tokens", "max_completion_tokens", "max_output_tokens"]) expect(sent[key]).toBeUndefined();
+  });
+  it("suggests checkpoints without blocking further reads and continues after releasing sources", async () => {
     const data = createDemoData(), work = data.works.find(row => row.type === "novel")!;
     const read = vi.spyOn(novel, "readNovelSample").mockImplementation(async (_d, _a, _s, _r, limits) => ({ cached: false, result: { workKey: work.key, ...sampleNovelText("文字".repeat(50000), "balanced", "", limits) } }));
     let step = 0;
-    const fetch = vi.fn().mockImplementation(async () => {
+    const fetch = vi.fn().mockImplementation(async (_url, _init) => {
       if (step === 9) return sse([response([message("继续完成")])]);
       const note = step === 7;
       const args = note ? { sourceIds: Array.from({ length: 6 }, (_, i) => `S${i + 1}`), notes: "[S1] [S2] [S3] [S4] [S5] [S6] 已观察文字；叙事关系未知，需补读。" } : { workKey: work.key, focus: "balanced", keyword: "", refresh: false };
@@ -29,9 +75,10 @@ describe("Agent protocol and execution acceptance", () => {
     vi.stubGlobal("fetch", fetch);
     const events = hooks();
     await runAgent({ ...config, sampleOriginals: true, memoryEnabled: false }, [{ ...user, content: "按需补读正文" }], data, false, new AbortController().signal, events);
-    expect(events.onTrace.mock.calls[6]![0].result).toContain("请先调用 record_reading_notes");
+    expect(JSON.parse(events.onTrace.mock.calls[6]![0].result).error).toBeUndefined();
+    expect(fetch.mock.calls.some(call => JSON.parse(call[1].body).instructions.includes("This is not a limit".toLowerCase()))).toBe(true);
     expect(JSON.parse(events.onTrace.mock.calls[8]![0].result).error).toBeUndefined();
-    expect(read).toHaveBeenCalledTimes(7);
+    expect(read).toHaveBeenCalledTimes(8);
     expect(events.onText.mock.calls.flat().join("")).toBe("继续完成");
   });
   it("stops combining reading positions when the original changes between batches", async () => {
@@ -101,7 +148,7 @@ describe("Agent protocol and execution acceptance", () => {
     });
     vi.stubGlobal("fetch", fetch);
     const events = hooks();
-    await runAgent({ ...config, protocol, memoryEnabled: false, sampleOriginals: true, contextWindow: 1000000, maxOutputTokens: 8192, inputBudget: 0, totalInputBudget: 0, maxSteps: 0 }, [{ ...user, content: "分析不同题材的数据差异，结合文章正文" }], data, false, new AbortController().signal, events);
+    await runAgent({ ...config, protocol, memoryEnabled: false, sampleOriginals: true, maxSteps: 0 }, [{ ...user, content: "分析不同题材的数据差异，结合文章正文" }], data, false, new AbortController().signal, events);
     const results = events.onTrace.mock.calls.map(([trace]) => JSON.parse(trace.result));
     expect(results.map(row => row.error).filter(Boolean)).toEqual([]);
     expect(results[0].data.rows).toHaveLength(30);
@@ -218,14 +265,28 @@ describe("Agent protocol and execution acceptance", () => {
       return sse([response(request.tools?.length ? [{ type: "function_call", id: "f", call_id: `c${fetch.mock.calls.length}`, name: "get_overview", arguments: "{}" }] : [message("已有证据足够 [S1]")])]);
     });
     vi.stubGlobal("fetch", fetch);
-    await runAgent({ ...config, maxSteps: 0, inputBudget: 0, totalInputBudget: 0 }, [user], createDemoData(), false, new AbortController().signal, hooks());
+    await runAgent({ ...config, maxSteps: 0 }, [user], createDemoData(), false, new AbortController().signal, hooks());
     expect(fetch.mock.calls.length).toBeLessThanOrEqual(4);
     expect(JSON.parse(fetch.mock.calls.at(-1)![1].body).tools).toBeUndefined();
   });
-  it("allows tool use with an unlimited per-request budget and a finite cumulative budget", async () => {
+  it("does not treat public milestones as stagnant data queries", async () => {
+    let step = 0;
+    const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
+      const request = JSON.parse(init.body);
+      if (step === 3) return sse([response([message("已完成核对。")])]);
+      expect(request.tools).toBeDefined();
+      const name = step < 2 ? "report_progress" : "get_data_quality";
+      const args = name === "report_progress" ? { message: `阶段 ${step + 1}：继续核对观测范围。` } : {};
+      return sse([response([{ type: "function_call", id: `f${step}`, call_id: `c${step++}`, name, arguments: JSON.stringify(args) }])]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await runAgent(config, [user], createDemoData(), false, new AbortController().signal, hooks());
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+  it("keeps tools available throughout a normal query", async () => {
     const fetch = vi.fn().mockResolvedValueOnce(sse([response([{ type: "function_call", id: "f", call_id: "c", name: "get_overview", arguments: "{}" }])])).mockResolvedValueOnce(sse([response([message("已有事实 [S1]")])]));
     vi.stubGlobal("fetch", fetch);
-    await runAgent({ ...config, inputBudget: 0, totalInputBudget: 160000 }, [user], createDemoData(), false, new AbortController().signal, hooks());
+    await runAgent(config, [user], createDemoData(), false, new AbortController().signal, hooks());
     expect(JSON.parse(fetch.mock.calls[0]![1].body).tools.length).toBeGreaterThan(0);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
@@ -314,10 +375,10 @@ describe("Agent protocol and execution acceptance", () => {
     expect(sent.instructions).not.toContain(data.works[0]!.title);
     expect(events.onTrace.mock.calls[0]![0].name).toBe("get_overview");
   });
-  it("reserves a final synthesis request at the cumulative budget boundary", async () => {
+  it("ends repeated no-evidence queries with a final synthesis", async () => {
     const fetchMock = vi.fn().mockImplementation(async (_url, init) => JSON.parse(init.body).tools ? sse([response([{ type: "function_call", id: "f", call_id: `c${Date.now()}`, name: "get_overview", arguments: "{}" }])]) : sse([response([message("总结 [S1]")])]));
     vi.stubGlobal("fetch", fetchMock);
-    await runAgent({ ...config, inputBudget: 24000, totalInputBudget: 48000, maxSteps: 20 }, [user], createDemoData(), false, new AbortController().signal, hooks());
+    await runAgent({ ...config, maxSteps: 20 }, [user], createDemoData(), false, new AbortController().signal, hooks());
     expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
     expect(fetchMock.mock.calls.length).toBeLessThan(5);
     expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body).tools).toBeUndefined();
@@ -338,7 +399,7 @@ describe("Agent protocol and execution acceptance", () => {
     expect(second.input).toContainEqual(reasoning);
     expect(second.input.at(-1)).toMatchObject({ type: "function_call_output", call_id: "call1" });
     const data = JSON.parse(second.input.at(-1).output);
-    expect(data.source).toBe("S2"); expect(data.data.workCount).toBe(createDemoData().works.length);
+    expect(data.source).toBe("S2"); expect(data.data.reusedSource).toBe("S1");
     expect(events.onText).toHaveBeenCalledWith("共有作品，依据 [S1]。");
     expect(events.onUsage).toHaveBeenLastCalledWith(expect.objectContaining({ input: 24, output: 8, requests: 2, memoryHits: 1 }));
     expect(JSON.stringify(second)).not.toContain(config.apiKey);
@@ -352,9 +413,9 @@ describe("Agent protocol and execution acceptance", () => {
       chunk({ tool_calls: [{ index: 0, function: { arguments: '"offset":0,"limit":1}' } }] }, "tool_calls"),
     ])).mockResolvedValueOnce(sse([chunk({ content: "结果 [S1]" }, "stop")]));
     vi.stubGlobal("fetch", fetchMock);
-    await runAgent({ ...config, protocol: "chat", outputParameter: "max_tokens" }, [user], createDemoData(), false, new AbortController().signal, hooks());
+    await runAgent({ ...config, protocol: "chat" }, [user], createDemoData(), false, new AbortController().signal, hooks());
     const second = JSON.parse(fetchMock.mock.calls[1]![1].body);
-    expect(second.max_tokens).toBe(config.maxOutputTokens); expect(second.max_completion_tokens).toBeUndefined();
+    expect(second.max_tokens).toBeUndefined(); expect(second.max_completion_tokens).toBeUndefined();
     expect(second.messages.at(-2).reasoning_content).toBe("provider reason");
     expect(second.messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "c1" });
   });
@@ -407,10 +468,10 @@ describe("Agent protocol and execution acceptance", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(fetchMock.mock.calls[0]![1].body).tool_choice).toBe("auto");
   });
-  it("trims whole old turns and preserves the current question", () => {
-    const result = selectHistory([{ ...user, content: "a".repeat(2000) }, { ...user, id: "a", role: "assistant", content: "b".repeat(1000) }, { ...user, id: "new", content: "current" }], 500);
-    expect(result.trimmedTurns).toBe(1); expect(result.messages.map((m) => m.id)).toEqual(["new"]);
-    expect(() => selectHistory([{ ...user, content: "中".repeat(2000) }], 500)).toThrow("超出上下文预算");
+  it("preserves old complete turns and long current questions without trimming", () => {
+    const result = selectHistory([{ ...user, content: "a".repeat(2000) }, { ...user, id: "a", role: "assistant", content: "b".repeat(1000) }, { ...user, id: "new", content: "current" }]);
+    expect(result.map((m) => m.id)).toEqual(["u1", "a", "new"]);
+    expect(selectHistory([{ ...user, content: "中".repeat(2000) }])[0]!.content).toHaveLength(2000);
   });
   it("enforces the configured tool round limit before an unbounded loop", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => sse([response([{ type: "function_call", id: "f", call_id: "c", name: "get_overview", arguments: "{}" }])]));
@@ -429,19 +490,37 @@ describe("Agent protocol and execution acceptance", () => {
       await assertion;
     } finally { vi.useRealTimers(); }
   });
-  it("reduces oversized pages with correct continuation instead of dropping all evidence", async () => {
+  it("keeps a long active stream alive beyond the idle timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation(async (_url, init) => new Response(new ReadableStream<Uint8Array>({ start(value) { controller = value; init.signal.addEventListener("abort", () => value.error(new Error("aborted"))); } }), { headers: { "content-type": "text/event-stream" } })));
+      const output = vi.fn();
+      const running = generateTurn({ ...config, timeoutSeconds: 10 }, "test", [], [], [], new AbortController().signal, output);
+      await vi.advanceTimersByTimeAsync(0);
+      for (let index = 0; index < 4; index++) {
+        await vi.advanceTimersByTimeAsync(9000);
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "持续输出" })}\n\n`));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(response([message("持续输出".repeat(4))]))}\n\n`)); controller.close();
+      expect((await running).text).toBe("持续输出".repeat(4));
+      expect(output).toHaveBeenCalledTimes(4);
+    } finally { vi.useRealTimers(); }
+  });
+  it("delivers every requested row of large results without a context quota", async () => {
     const data = createDemoData();
     const work = data.works[0]!;
     data.works = Array.from({ length: 30 }, (_, index) => ({ ...work, key: `k${index}`, title: "长".repeat(300), description: "文".repeat(600) }));
     const fetchMock = vi.fn().mockResolvedValueOnce(sse([response([{ type: "function_call", id: "f", call_id: "c", name: "search_works", arguments: '{"query":"","offset":0,"limit":30}' }])])).mockResolvedValueOnce(sse([response([message("请缩小范围")])]));
     vi.stubGlobal("fetch", fetchMock);
     const events = hooks();
-    await runAgent({ ...config, inputBudget: 24000 }, [user], data, false, new AbortController().signal, events);
+    await runAgent(config, [user], data, false, new AbortController().signal, events);
     const result = JSON.parse(events.onTrace.mock.calls.at(-1)![0].result);
     expect(result.error).toBeUndefined();
     expect(result.data.total).toBe(30);
     expect(result.data.rows.length).toBeGreaterThan(0);
-    expect(result.data.rows.length).toBeLessThan(30);
-    expect(result.data.nextOffset).toBe(result.data.rows.length);
+    expect(result.data.rows.length).toBe(30);
+    expect(result.data.nextOffset).toBeNull();
   });
 });
