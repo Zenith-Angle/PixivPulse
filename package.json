@@ -1,6 +1,6 @@
 {
   "name": "pixiv-pulse",
-  "version": "0.5.16",
+  "version": "0.5.17",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -20,7 +20,7 @@
     "build:installed": "npm run generate:icons && wxt build -c wxt.dev.config.ts && node scripts/verify-installed-build.mjs",
     "verify:installed": "node scripts/verify-installed-build.mjs",
     "build": "npm run generate:icons && wxt build",
-    "zip": "npm run generate:icons && wxt zip",
+    "zip": "npm run generate:icons && wxt zip && node scripts/verify-store-build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "verify": "npm run typecheck && npm test && npm run build && npm run zip && npm run build:installed"

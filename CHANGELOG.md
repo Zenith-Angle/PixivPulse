@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.17 — 2026-09-15
+
+- Remove the local development manifest key from store builds to fix uploads to an existing Chrome Web Store item.
+- Preserve the development key in wxt.dev.config.ts and validate store metadata after packaging.
+
+
 ## 0.5.16 — 2026-09-15
 
 - Add Simplified Chinese and English UI localization with browser-language detection and a saved language selector.
