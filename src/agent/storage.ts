@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { openDB, type DBSchema } from "idb";
 import { restoreConfig } from "./config";
 import type { AgentConfig, Conversation } from "./types";
@@ -49,7 +50,7 @@ export async function listConversations(accountId: string): Promise<Conversation
     const rows = await db.getAllFromIndex("conversations", "account", accountId);
     return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((row) => ({ ...row,
       messages: row.messages.map((message) => message.status === "running"
-        ? { ...message, status: "stopped" as const, error: "上次生成已中断，可以重试。", activity: message.activity?.map(item => ({ ...item, ...(item.status === "running" ? { status: "stopped" as const } : {}), reading: item.reading?.map(read => read.status === "queued" || read.status === "reading" ? { ...read, status: "skipped" as const, detail: "上次生成已中断，未完成读取" } : read) ?? [] })) ?? [], reading: message.reading?.map(item => item.status === "queued" || item.status === "reading" ? { ...item, status: "skipped" as const, detail: "上次生成已中断，未完成读取" } : item) ?? [] } : message),
+        ? { ...message, status: "stopped" as const, error: t("上次生成已中断，可以重试。"), activity: message.activity?.map(item => ({ ...item, ...(item.status === "running" ? { status: "stopped" as const } : {}), reading: item.reading?.map(read => read.status === "queued" || read.status === "reading" ? { ...read, status: "skipped" as const, detail: t("上次生成已中断，未完成读取") } : read) ?? [] })) ?? [], reading: message.reading?.map(item => item.status === "queued" || item.status === "reading" ? { ...item, status: "skipped" as const, detail: t("上次生成已中断，未完成读取") } : item) ?? [] } : message),
     }));
   } finally { db.close(); }
 }
@@ -66,11 +67,11 @@ export async function deleteConversation(id: string): Promise<void> {
 
 export function conversationMarkdown(conversation: Conversation): string {
   return `# ${conversation.title}\n\n` + conversation.messages.map((message) =>
-    `## ${message.role === "user" ? "用户" : "Agent"} · ${message.at}\n\n${message.content}\n\n` +
-    (message.error ? `状态：${message.error}\n\n` : "") +
-    (message.activity?.some(item => item.kind === "commentary" && !item.id.startsWith("milestone:")) ? "### 分析进展\n\n" + message.activity.filter(item => item.kind === "commentary" && !item.id.startsWith("milestone:")).map(item => item.text).join("\n\n") + "\n\n" : "") +
-    (message.usage ? `用量：输入 ${message.usage.input} / 输出 ${message.usage.output} tokens，${message.usage.requests ?? 0} 次请求。\n\n` : "") +
-    message.traces.map((trace) => `### ${trace.id} · ${trace.name}\n\n参数：${trace.arguments}\n\n\`\`\`json\n${trace.result}\n\`\`\`\n`).join("\n")
+    `## ${message.role === "user" ? t("用户") : "Agent"} · ${message.at}\n\n${message.content}\n\n` +
+    (message.error ? t("状态：{value1}\n\n", { value1: message.error }) : "") +
+    (message.activity?.some(item => item.kind === "commentary" && !item.id.startsWith("milestone:")) ? t("### 分析进展\n\n") + message.activity.filter(item => item.kind === "commentary" && !item.id.startsWith("milestone:")).map(item => item.text).join("\n\n") + "\n\n" : "") +
+    (message.usage ? t("用量：输入 {value1} / 输出 {value2} tokens，{value3} 次请求。\n\n", { value1: message.usage.input, value2: message.usage.output, value3: message.usage.requests ?? 0 }) : "") +
+    message.traces.map((trace) => t("### {value1} · {value2}\n\n参数：{value3}\n\n```json\n{value4}\n```\n", { value1: trace.id, value2: trace.name, value3: trace.arguments, value4: trace.result })).join("\n")
   ).join("\n");
 }
 

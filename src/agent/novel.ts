@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { readNovelDetail } from "./novel-page";
 import type { DashboardData } from "../domain/types";
 import { readMemory, writeMemory } from "./storage";
@@ -24,17 +25,17 @@ export async function readNovelSample(data: DashboardData, args: Record<string, 
 async function readUnlocked(data: DashboardData, args: Record<string, unknown>, signal: AbortSignal, remember: boolean, limits: ReadingLimits = DEFAULT_READING_LIMITS, onProgress?: (detail: string) => void) {
   const work = data.works.find(work => work.key === args.workKey && work.type === "novel");
   if (!work || !/^\d+$/.test(work.id) || !SAMPLING_FOCI.includes(args.focus as never) || typeof args.keyword !== "string" || args.keyword.length > 80 || typeof args.refresh !== "boolean"
-    || Object.keys(args).sort().join() !== "focus,keyword,refresh,workKey" || (args.focus === "keyword" ? !args.keyword.trim() : !!args.keyword)) throw new Error("请选择本地小说及有效采样方式；关键词采样需填写关键词。");
+    || Object.keys(args).sort().join() !== "focus,keyword,refresh,workKey" || (args.focus === "keyword" ? !args.keyword.trim() : !!args.keyword)) throw new Error(t("请选择本地小说及有效采样方式；关键词采样需填写关键词。"));
   const scope = `novel-v4:${data.settings.boundAccount?.id ?? "unbound"}:${work.key}`;
   const id = `${scope}:${JSON.stringify([work.title, work.publishedAt, args.focus, args.keyword, limits])}`;
   signal.throwIfAborted();
-  onProgress?.("检查本地正文缓存");
+  onProgress?.(t("检查本地正文缓存"));
   if (remember && !args.refresh) {
     try { const cached = (await readMemory(scope)).find(row => row.id === id); if (cached) return { result: cached.result, cached: true }; } catch { /* Read fresh on cache failure. */ }
   }
-  if (typeof chrome === "undefined" || !chrome.runtime?.id || !chrome.tabs) throw new Error("原文采样需要在已安装的扩展中运行，并在 Pixiv 保持登录；网页演示不读取原文。");
+  if (typeof chrome === "undefined" || !chrome.runtime?.id || !chrome.tabs) throw new Error(t("原文采样需要在已安装的扩展中运行，并在 Pixiv 保持登录；网页演示不读取原文。"));
   const url = `https://www.pixiv.net/novel/show.php?id=${work.id}`;
-  onProgress?.("检查已打开的作品页");
+  onProgress?.(t("检查已打开的作品页"));
   const tabs = await chrome.tabs.query({ url: "https://www.pixiv.net/novel/show.php*" });
   const tab = tabs.find(tab => tab.url && new URL(tab.url).searchParams.get("id") === work.id);
   let sampled;

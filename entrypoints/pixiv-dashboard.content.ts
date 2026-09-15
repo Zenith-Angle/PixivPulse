@@ -1,3 +1,4 @@
+import { t, initializeLocale, LANGUAGE_STORAGE_KEY } from "../src/i18n";
 import { defineContentScript } from "wxt/utils/define-content-script";
 import { browser } from "wxt/browser";
 import { PAGE_READY_TIMEOUT_MS, PAGE_STABLE_MS, PARSER_VERSION } from "../src/domain/constants";
@@ -250,7 +251,7 @@ export function formatGrowthDelta(value: number | null | undefined): string {
 
 function growthAriaLabel(analysis: IntradayWorkAnalysis | null): string {
   return GROWTH_METRICS
-    .map(({ key, label }) => `${label} ${formatGrowthDelta(analysis?.delta[key])}`)
+    .map(({ key, label }) => `${t(label)} ${formatGrowthDelta(analysis?.delta[key])}`)
     .join("，");
 }
 
@@ -346,7 +347,7 @@ function renderGrowthStrip(root: Document, host: HTMLElement, work: WorkRecord, 
 
     const labelNode = root.createElement("span");
     labelNode.className = "metric-label";
-    labelNode.textContent = label;
+    labelNode.textContent = t(label);
     const valueNode = root.createElement("strong");
     valueNode.className = "metric-value";
     valueNode.textContent = value;
@@ -583,7 +584,8 @@ async function run(generation = 0, currentGeneration = (): number => generation)
 export default defineContentScript({
   matches: ["https://www.pixiv.net/dashboard/works*"],
   runAt: "document_idle",
-  main(ctx) {
+  async main(ctx) {
+    await initializeLocale({ updateDocument: false });
     let generation = 0;
     let renderGeneration = 0;
     let cachedContext: GrowthRenderContext | null = null;
@@ -639,6 +641,10 @@ export default defineContentScript({
     start();
     ctx.addEventListener(window, "wxt:locationchange", start);
     browser.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === "local" && changes[LANGUAGE_STORAGE_KEY]) {
+        void initializeLocale({ updateDocument: false }).then(() => refreshGrowthChips());
+        return;
+      }
       if (areaName !== "local" || (!changes["pixivPulse.settings"] && !changes["pixivPulse.syncState"] && !changes[DATA_REVISION_STORAGE_KEY])) return;
       void refreshGrowthChips();
     });

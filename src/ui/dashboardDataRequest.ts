@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import type { RuntimeMessage, RuntimeResponse } from "../domain/messages";
 
 export type DashboardDataRequest = Promise<RuntimeResponse | null>;
@@ -10,7 +11,7 @@ export async function sendRuntimeMessage(message: RuntimeMessage): Promise<Runti
   try {
     return await chrome.runtime.sendMessage(message) as RuntimeResponse;
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "扩展后台暂时不可用" };
+    return { ok: false, error: error instanceof Error ? error.message : t("扩展后台暂时不可用") };
   }
 }
 

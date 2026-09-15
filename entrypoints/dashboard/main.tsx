@@ -1,3 +1,4 @@
+import { initializeLocale } from "../../src/i18n/locale";
 import { primeDashboardDataRequest } from "../../src/ui/dashboardDataRequest";
 import "./styles.css";
 import "../../src/ui/agent.css";
@@ -10,10 +11,13 @@ if (!root) {
 
 const bootstrapRequest = primeDashboardDataRequest();
 
-void Promise.all([
+void initializeLocale().then(() => {
+  document.title = document.documentElement.lang === "en" ? "PixivPulse · Creator Growth Tracker" : "PixivPulse · 作者增长追踪";
+  return Promise.all([
   import("react"),
   import("react-dom/client"),
   import("./App"),
-]).then(([{ createElement, StrictMode }, { createRoot }, { App }]) => {
+]);
+}).then(([{ createElement, StrictMode }, { createRoot }, { App }]) => {
   createRoot(root).render(createElement(StrictMode, null, createElement(App, { bootstrapRequest })));
 });

@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import type { DashboardData } from "../domain/types";
 
 export function suggestedQuestions(data: DashboardData): Record<string, string[]> {
@@ -57,5 +58,5 @@ export function suggestedQuestions(data: DashboardData): Record<string, string[]
       "先读取不同文体投稿的正文，再判断哪些作品适合相互比较；公告、说明与故事分开讨论，避免平均成统一创作风格。",
     ];
   }
-  return categories;
+  return Object.fromEntries(Object.entries(categories).map(([category, questions]) => [category, questions.map(question => t(question))]));
 }

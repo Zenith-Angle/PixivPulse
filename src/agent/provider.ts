@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import OpenAI from "openai";
 import { TOOL_LABELS } from "./progress";
 import { partialCommentary } from "./commentary";
@@ -20,14 +21,14 @@ export function safeAgentError(error: unknown): string {
   if (error instanceof AgentError) return error.message;
   if (error instanceof OpenAI.APIError) {
     switch (error.status) {
-      case 401: case 403: return "认证失败或权限不足，请检查 API key、模型权限和账户状态。";
-      case 404: return "找不到 API 端点或模型，请检查 Base URL、协议和模型名称。";
-      case 429: return "API 限流或额度不足，请检查账户配额后重试。";
-      case 400: case 422: return "API 拒绝了请求，请检查模型的协议、工具调用、参数兼容性或服务商上下文限制。";
-      default: return error.status ? `API 请求失败（HTTP ${error.status}），请稍后重试。` : "网络连接失败，请检查地址、域名权限和服务可用性。";
+      case 401: case 403: return t("认证失败或权限不足，请检查 API key、模型权限和账户状态。");
+      case 404: return t("找不到 API 端点或模型，请检查 Base URL、协议和模型名称。");
+      case 429: return t("API 限流或额度不足，请检查账户配额后重试。");
+      case 400: case 422: return t("API 拒绝了请求，请检查模型的协议、工具调用、参数兼容性或服务商上下文限制。");
+      default: return error.status ? t("API 请求失败（HTTP {value1}），请稍后重试。", { value1: error.status }) : t("网络连接失败，请检查地址、域名权限和服务可用性。");
     }
   }
-  return "请求失败，请检查网络和 API 配置后重试。";
+  return t("请求失败，请检查网络和 API 配置后重试。");
 }
 
 function client(config: AgentConfig) {
@@ -60,9 +61,9 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
   let text = "";
   let lastStage = "";
   const progress = (stage: string) => { if (stage !== lastStage) { lastStage = stage; onProgress(stage); } };
-  progress("等待模型响应");
+  progress(t("等待模型响应"));
   const addText = (chunk: string) => {
-    progress("正在输出回答");
+    progress(t("正在输出回答"));
     text += chunk;
     onText(chunk);
   };
@@ -81,7 +82,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
       const receive = (output: number, content: number, value: string, delta = false) => {
         const key = `${output}:${content}`, previous = blocks.get(key) ?? "";
         const next = delta ? previous + value : value;
-        if (!next.startsWith(previous)) throw new AgentError("模型流式文本前后不一致，已保留收到的内容。");
+        if (!next.startsWith(previous)) throw new AgentError(t("模型流式文本前后不一致，已保留收到的内容。"));
         blocks.set(key, next);
         const suffix = next.slice(previous.length);
         if (suffix) addText(suffix);
@@ -93,17 +94,17 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
           if (part.type === "refusal" && typeof part.refusal === "string") receive(index, content, part.refusal);
         });
       };
-      progress("模型已连接，等待内容");
+      progress(t("模型已连接，等待内容"));
       for await (const event of stream) {
         heartbeat();
         if ((event.type === "response.output_item.added" || event.type === "response.output_item.done") && event.item.type === "function_call") { functions.set(event.output_index, event.item); publicUpdate(event.output_index, event.item); }
         if (event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") {
           const item = functions.get(event.output_index);
-          if (item) { item.arguments = event.type.endsWith(".delta") ? item.arguments + (event as { delta: string }).delta : (event as { arguments: string }).arguments; if (item.arguments.length > 20000) throw new AgentError("工具参数过长。"); publicUpdate(event.output_index, item); }
+          if (item) { item.arguments = event.type.endsWith(".delta") ? item.arguments + (event as { delta: string }).delta : (event as { arguments: string }).arguments; if (item.arguments.length > 20000) throw new AgentError(t("工具参数过长。")); publicUpdate(event.output_index, item); }
         }
-        if (event.type.startsWith("response.reasoning")) progress("模型正在处理问题");
-        if (event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") progress("模型正在准备工具调用");
-        if (event.type === "response.output_item.added" && event.item.type === "function_call") progress(`模型正在准备：${TOOL_LABELS[event.item.name] ?? "查询分析证据"}`);
+        if (event.type.startsWith("response.reasoning")) progress(t("模型正在处理问题"));
+        if (event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") progress(t("模型正在准备工具调用"));
+        if (event.type === "response.output_item.added" && event.item.type === "function_call") progress(t("模型正在准备：{value1}", { value1: TOOL_LABELS[event.item.name] ?? t("查询分析证据") }));
         if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") receive(event.output_index ?? 0, event.content_index ?? 0, event.delta, true);
         if (event.type === "response.output_text.done") receive(event.output_index ?? 0, event.content_index ?? 0, event.text);
         if (event.type === "response.refusal.done") receive(event.output_index ?? 0, event.content_index ?? 0, event.refusal);
@@ -112,20 +113,20 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
           if (event.part.type === "refusal") receive(event.output_index ?? 0, event.content_index ?? 0, event.part.refusal);
         }
         if (event.type === "response.output_item.done") receiveItem(event.item, event.output_index);
-        if (event.type === "response.failed" || event.type === "error") throw new AgentError("模型返回生成失败，请重试或更换模型。");
-        if (event.type === "response.incomplete") throw new AgentError("服务商提前结束了回答，已保留收到的内容；可继续追问尚未完成的部分。");
+        if (event.type === "response.failed" || event.type === "error") throw new AgentError(t("模型返回生成失败，请重试或更换模型。"));
+        if (event.type === "response.incomplete") throw new AgentError(t("服务商提前结束了回答，已保留收到的内容；可继续追问尚未完成的部分。"));
         if (event.type === "response.completed") {
           const response = event.response;
-          if (response.status !== "completed") throw new AgentError("模型响应未完成。");
+          if (response.status !== "completed") throw new AgentError(t("模型响应未完成。"));
           response.output.forEach((item, index) => { if (item.type === "function_call") publicUpdate(index, item); else receiveItem(item, index); });
           final = { text, calls: response.output.flatMap((item) => item.type === "function_call" ? [{ id: item.call_id, name: item.name, arguments: item.arguments }] : []),
             output: response.output.map((item): ResponseInputItem => {
               if (item.type === "message" || item.type === "function_call" || item.type === "reasoning") return item;
-              throw new AgentError("API 返回了未启用的工具类型。");
+              throw new AgentError(t("API 返回了未启用的工具类型。"));
             }), chat: { role: "assistant", content: text }, usage: { input: response.usage?.input_tokens ?? 0, output: response.usage?.output_tokens ?? 0, cachedInput: response.usage?.input_tokens_details?.cached_tokens ?? 0 } };
         }
       }
-      if (!final) throw new AgentError("响应流提前断开，已保留收到的内容，请重试。");
+      if (!final) throw new AgentError(t("响应流提前断开，已保留收到的内容，请重试。"));
       return final;
     }
     const stream = await client(config).chat.completions.create({ model: config.model, messages: [{ role: "system", content: system }, ...chat], stream: true,
@@ -136,7 +137,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
     let finish: string | null = null;
     let reasoning = "";
     let usage = { input: 0, output: 0, cachedInput: 0 };
-    progress("模型已连接，等待内容");
+    progress(t("模型已连接，等待内容"));
     for await (const chunk of stream) {
       heartbeat();
       if (chunk.usage) usage = { input: chunk.usage.prompt_tokens, output: chunk.usage.completion_tokens, cachedInput: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0 };
@@ -146,22 +147,22 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
       if (choice.delta.content) addText(choice.delta.content);
       if (choice.delta.refusal) addText(choice.delta.refusal);
       const reasoningDelta = (choice.delta as { reasoning_content?: string }).reasoning_content;
-      if (reasoningDelta) { reasoning += reasoningDelta; progress("模型正在处理问题"); }
+      if (reasoningDelta) { reasoning += reasoningDelta; progress(t("模型正在处理问题")); }
       for (const call of choice.delta.tool_calls ?? []) {
-        progress("模型正在准备工具调用");
-        if (!Number.isInteger(call.index) || call.index < 0 || call.index > 15) throw new AgentError("API 返回不兼容的工具调用格式。");
+        progress(t("模型正在准备工具调用"));
+        if (!Number.isInteger(call.index) || call.index < 0 || call.index > 15) throw new AgentError(t("API 返回不兼容的工具调用格式。"));
         const pending = calls.get(call.index) ?? { id: "", name: "", arguments: "" };
         if (call.id) pending.id += call.id;
         if (call.function?.name) pending.name += call.function.name;
         if (call.function?.arguments) pending.arguments += call.function.arguments;
-        if (pending.arguments.length > 20000) throw new AgentError("工具参数过长。");
+        if (pending.arguments.length > 20000) throw new AgentError(t("工具参数过长。"));
         calls.set(call.index, pending);
-        if (TOOL_LABELS[pending.name]) progress(`模型正在准备：${TOOL_LABELS[pending.name]}`);
+        if (TOOL_LABELS[pending.name]) progress(t("模型正在准备：{value1}", { value1: TOOL_LABELS[pending.name] ?? pending.name }));
         if (pending.name === "report_progress") { const value = partialCommentary(pending.arguments); if (value) onCommentary(call.index, value); }
       }
     }
-    if (!finish) throw new AgentError("响应流提前断开，已保留收到的内容，请重试。");
-    if (finish !== "stop" && finish !== "tool_calls") throw new AgentError("服务商截断了回答或限制了生成，已保留收到的内容；可继续追问尚未完成的部分。");
+    if (!finish) throw new AgentError(t("响应流提前断开，已保留收到的内容，请重试。"));
+    if (finish !== "stop" && finish !== "tool_calls") throw new AgentError(t("服务商截断了回答或限制了生成，已保留收到的内容；可继续追问尚未完成的部分。"));
     const completed = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
     const message: ChatCompletionAssistantMessageParam & { reasoning_content?: string } = { role: "assistant", content: text || null,
       ...(completed.length ? { tool_calls: completed.map((call) => ({ id: call.id, type: "function" as const, function: { name: call.name, arguments: call.arguments } })) } : {}),
@@ -169,7 +170,7 @@ export async function generateTurn(config: AgentConfig, system: string, chat: Wi
     };
     return { text, calls: completed, chat: message, output: [], usage };
   } catch (error) {
-    if (timedOut) throw new AgentError("API 长时间未返回新内容，已保留收到的内容；可调整无响应超时后重试。");
+    if (timedOut) throw new AgentError(t("API 长时间未返回新内容，已保留收到的内容；可调整无响应超时后重试。"));
     throw error;
   } finally { clearTimeout(timer); signal.removeEventListener("abort", relay); }
 }
@@ -179,9 +180,9 @@ export async function testConnection(config: AgentConfig, signal: AbortSignal): 
   const probe: ToolDefinition = { name: "connection_probe", description: "Return connection status.", parameters: { type: "object", properties: {}, required: [], additionalProperties: false } };
   const question = { role: "user" as const, content: "Call connection_probe once, then reply OK." };
   const first = await generateTurn(c, "You are testing API connectivity. You must call connection_probe exactly once before answering.", [question], [question], [probe], signal, () => {});
-  if (first.calls.length !== 1 || first.calls[0]?.name !== probe.name || !first.calls[0].id) throw new AgentError("端点可连接，但模型未正确执行工具调用，不能用于 Agent 分析。");
+  if (first.calls.length !== 1 || first.calls[0]?.name !== probe.name || !first.calls[0].id) throw new AgentError(t("端点可连接，但模型未正确执行工具调用，不能用于 Agent 分析。"));
   const call = first.calls[0];
   const second = await generateTurn(c, "The connection probe succeeded. Reply OK.", [question, first.chat, { role: "tool", tool_call_id: call.id, content: '{"ok":true}' }],
     [question, ...first.output, { type: "function_call_output", call_id: call.id, output: '{"ok":true}' }], [], signal, () => {});
-  if (!second.text.trim() || second.calls.length) throw new AgentError("工具结果已回传，但模型未生成最终回答。");
+  if (!second.text.trim() || second.calls.length) throw new AgentError(t("工具结果已回传，但模型未生成最终回答。"));
 }

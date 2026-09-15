@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 export interface AgentConfig {
   baseUrl: string;
   model: string;
@@ -22,7 +23,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   maxSteps: 0, temperature: null,
   timeoutSeconds: 120,
   memoryEnabled: true, sampleOriginals: false, analysisFocus: "auto", readingDepth: "auto", customReadingChars: 4500, customReadingPercent: 60,
-  rememberKey: false, shareData: false, instructions: "例如：我在 Pixiv 创作同人小说。请先给结论，再结合已读正文分析人物关系、角色塑造和叙事节奏，给出两三条具体建议。区分原作设定与本篇证据，不确定时说明；称呼作品时优先用标题或系列与章节。",
+  rememberKey: false, shareData: false, instructions: t("例如：我在 Pixiv 创作同人小说。请先给结论，再结合已读正文分析人物关系、角色塑造和叙事节奏，给出两三条具体建议。区分原作设定与本篇证据，不确定时说明；称呼作品时优先用标题或系列与章节。"),
 };
 
 export interface AgentUsage { input: number; output: number; requests?: number; memoryHits?: number; cachedInput?: number; evidenceBytes?: { content: number; statistics: number }; contextBytes?: number; compactedBytes?: number }

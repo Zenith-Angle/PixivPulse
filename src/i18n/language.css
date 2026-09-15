@@ -1,0 +1,9 @@
+.language-picker { color: var(--ink-soft); font-size: 12px; min-width: 0; }
+.language-picker label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.language-picker select { min-height: 34px; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 5px 8px; font: inherit; }
+.language-picker select:focus-visible { outline: 3px solid #00a7e9; outline-offset: 2px; }
+.language-picker--compact { padding: 6px 16px; }
+.language-picker--compact label { justify-content: space-between; }
+.language-picker [role=alert] { display: block; color: var(--danger); margin-top: 4px; }
+
+.language-picker--compact { flex: 0 0 auto; border-bottom: 1px solid var(--line); background: var(--surface); }

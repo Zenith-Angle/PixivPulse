@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.16 — 2026-09-15
+
+- Add Simplified Chinese and English UI localization with browser-language detection and a saved language selector.
+- Localize dashboard, popup, charts, storage/import messages, and optional Agent configuration, progress and suggested questions.
+- Localize extension metadata for Chrome Web Store; provide Chinese and English listing copy.
+- Preserve original work content, stored data and Beijing-time sampling boundaries.
+- Adapt long English labels and dashboard layouts to narrow windows.
+
+
 ## 0.5.15 · 2026-09-12
 
 - 按分析问题选择初始工具集合；时段、排名、比较和数据质量直达相关聚合，不再统一预读总览。具体疑点可展开明细工具，无新增输入输出预算。

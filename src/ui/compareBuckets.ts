@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import type { ChartTimePoint } from "./chartOptions";
 import type { ChartTimeRange } from "./chartTimeRange";
 
@@ -20,7 +21,7 @@ export function compareBucketHours(range: ChartTimeRange, span = 0): number {
 }
 
 export function compareBucketLabel(hours: number): string {
-  return hours < 24 ? `${hours} 小时` : `${hours / 24} 天`;
+  return hours < 24 ? t("{value0} 小时", { value0: hours }) : t("{value0} 天", { value0: hours / 24 });
 }
 
 export function compareBucketLayout(points: readonly ChartTimePoint[], range: ChartTimeRange) {

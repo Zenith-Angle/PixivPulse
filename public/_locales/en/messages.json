@@ -1,0 +1,11 @@
+{
+  "extensionName": {
+    "message": "PixivPulse - Creator Growth Tracker"
+  },
+  "extensionDescription": {
+    "message": "Track growth across your Pixiv works with local snapshots, trends, conversion metrics, and optional AI analysis."
+  },
+  "actionTitle": {
+    "message": "Open PixivPulse"
+  }
+}

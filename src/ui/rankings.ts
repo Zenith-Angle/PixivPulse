@@ -1,3 +1,4 @@
+import { t, getLocale } from "../i18n";
 import type { WorkAnalysis, WorkRecord, WorkSample } from "../domain/types";
 
 export type RankingStatus = "ranked" | "unranked" | "unknown";
@@ -197,22 +198,22 @@ export const buildRankingEntries = (
 
 export const rankingSourceLabel = (source: string | null | undefined): string => {
   const normalized = source?.trim().toLocaleLowerCase();
-  if (!normalized) return "来源未记录";
+  if (!normalized) return t("来源未记录");
   if (normalized.includes("api")) return "Pixiv API";
-  return "Pixiv作品页";
+  return t("Pixiv作品页");
 };
 
 export const rankingMovementLabel = (movement: number | null): string => {
-  if (movement === null) return "暂无上次排名";
-  if (movement > 0) return `上升 ${formatRankDistance(movement)} 名`;
-  if (movement < 0) return `下降 ${formatRankDistance(Math.abs(movement))} 名`;
-  return "排名无变化";
+  if (movement === null) return t("暂无上次排名");
+  if (movement > 0) return t("上升 {value0} 名", { value0: formatRankDistance(movement) });
+  if (movement < 0) return t("下降 {value0} 名", { value0: formatRankDistance(Math.abs(movement)) });
+  return t("排名无变化");
 };
 
-const formatRankDistance = (value: number): string => new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value);
+const formatRankDistance = (value: number): string => new Intl.NumberFormat(getLocale(), { maximumFractionDigits: 0 }).format(value);
 
 export const rankingStatusLabel = (status: RankingStatus): string => {
-  if (status === "ranked") return "已上榜";
-  if (status === "unranked") return "未上榜";
-  return "排名未知";
+  if (status === "ranked") return t("已上榜");
+  if (status === "unranked") return t("未上榜");
+  return t("排名未知");
 };

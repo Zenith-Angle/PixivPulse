@@ -58,13 +58,19 @@ PixivPulse 将作者自己的作品管理数据保存为本地历史，让你能
 | 备份与恢复 | 导出 JSON / CSV，导入时预览内容、检查账号与完整性，再合并数据。 |
 | 与 Agent 讨论 | 按需查询本地统计、比较作品，或授权采样小说正文进行分析。 |
 
+## 中英文界面与商店介绍
+
+支持跟随浏览器、简体中文和 English，可在弹窗或看板侧栏切换。切换会重新加载当前页面；已有其他页面重新打开后生效。作品标题、正文和对话保留原文，日界与同步刻度仍为北京时间（UTC+8）。
+
+Chrome 商店更新包：`release/pixiv-pulse-v0.5.16-chrome.zip`。商店文案：[中文版](./docs/store-listing.zh-CN.md) · [English](./docs/store-listing.en.md)。
+
 ## 安装与升级
 
-当前源码版本：**v0.5.15**（本地构建，尚未发布）。需要 **Chrome 120+**，通过已解压扩展安装。
+当前源码版本：**v0.5.16**（本地构建，尚未发布）。需要 **Chrome 120+**，通过已解压扩展安装。
 
 ### 首次安装
 
-1. 在 [最新 Release](https://github.com/Zenith-Angle/PixivPulse/releases/latest) 下载对应已发布版本的 Chrome ZIP；本地构建 0.5.15 可使用 `.output/pixiv-pulse-0.5.15-chrome.zip`。请选择这个安装包，GitHub 自动生成的 **Source code** 是源码包。
+1. 在 [最新 Release](https://github.com/Zenith-Angle/PixivPulse/releases/latest) 下载对应已发布版本的 Chrome ZIP；本地构建 0.5.16 可使用 `.output/pixiv-pulse-0.5.16-chrome.zip`。请选择这个安装包，GitHub 自动生成的 **Source code** 是源码包。
 2. 将 ZIP 完整解压到准备长期保留的目录，确认目录内有 `manifest.json`。
 3. 打开 Chrome 扩展管理页 `chrome://extensions`，开启“开发者模式”。
 4. 点击“加载已解压的扩展程序”，选择包含 `manifest.json` 的目录。
@@ -78,7 +84,7 @@ PixivPulse 将作者自己的作品管理数据保存为本地历史，让你能
 下载同一 Release 的 `SHA256SUMS.txt`，在 PowerShell 计算 ZIP 的哈希，与文件中的值比较：
 
 ```powershell
-Get-FileHash .\pixiv-pulse-v0.5.15-chrome.zip -Algorithm SHA256
+Get-FileHash .\pixiv-pulse-v0.5.16-chrome.zip -Algorithm SHA256
 ```
 
 </details>

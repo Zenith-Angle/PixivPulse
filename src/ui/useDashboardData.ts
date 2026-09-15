@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DashboardData, SyncState } from "../domain/types";
 import type { RuntimeMessage, RuntimeResponse, StorageCenterInfo } from "../domain/messages";
@@ -86,7 +87,7 @@ export const useDashboardData = (bootstrapRequest: DashboardDataRequest | null =
       setError(null);
       setLastRefreshAt(new Date().toISOString());
     } else {
-      setError(response && !response.ok ? response.error : "扩展后台未返回本地数据");
+      setError(response && !response.ok ? response.error : t("扩展后台未返回本地数据"));
     }
     setIsLoading(false);
   }, []);
@@ -318,18 +319,18 @@ export const useDashboardData = (bootstrapRequest: DashboardDataRequest | null =
 export const syncStatusLabel = (status: SyncState["status"] | null | undefined): string => {
   switch (status) {
     case "opening":
-      return "正在打开 Pixiv";
+      return t("正在打开 Pixiv");
     case "collecting":
-      return "正在采集作品";
+      return t("正在采集作品");
     case "rechecking":
-      return "正在复核页面";
+      return t("正在复核页面");
     case "committing":
-      return "正在保存快照";
+      return t("正在保存快照");
     case "completed":
-      return "同步完成";
+      return t("同步完成");
     case "failed":
-      return "同步失败";
+      return t("同步失败");
     default:
-      return "等待同步";
+      return t("等待同步");
   }
 };

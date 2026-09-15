@@ -1,3 +1,4 @@
+import { t, getLocale } from "../i18n";
 import type { EChartsCoreOption } from "echarts/core";
 import { formatBeijingTimestamp } from "../domain/time";
 import type { ChartTimeRange } from "./chartTimeRange";
@@ -28,10 +29,10 @@ export const DASHBOARD_CHART_METRICS: readonly DashboardChartMetric[] = [
 ];
 
 export const DASHBOARD_CHART_METRIC_LABELS: Record<DashboardChartMetric, string> = {
-  views: "浏览",
-  bookmarks: "收藏",
-  likes: "获赞",
-  comments: "评论",
+  views: t("浏览"),
+  bookmarks: t("收藏"),
+  likes: t("获赞"),
+  comments: t("评论"),
 };
 
 const formatAxisTime = (value: string | number): string => {
@@ -40,7 +41,7 @@ const formatAxisTime = (value: string | number): string => {
 
 const formatAxisNumber = (value: number): string => {
   if (!Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value);
+  return new Intl.NumberFormat(getLocale(), { maximumFractionDigits: 0 }).format(value);
 };
 
 const baseGrid = {
@@ -162,7 +163,7 @@ export const buildPortfolioChartOption = ({
       trigger: "axis",
       axisPointer: {
         type: "line",
-        label: { formatter: (params: { value: string | number }) => `${formatAxisTime(params.value)} · 采样值` },
+        label: { formatter: (params: { value: string | number }) => t("{value0} · 采样值", { value0: formatAxisTime(params.value) }) },
       },
       valueFormatter: (value: unknown) => formatAxisNumber(Number(value)),
     },
@@ -188,7 +189,7 @@ export const buildPortfolioChartOption = ({
       name: label,
       type: "line",
       data: validPoints,
-      dimensions: [{ name: "时间", type: "time" }, { name: label, type: "float" }, { name: "同步", type: "ordinal" }, { name: "顺序", type: "int" }],
+      dimensions: [{ name: t("时间"), type: "time" }, { name: label, type: "float" }, { name: t("同步"), type: "ordinal" }, { name: t("顺序"), type: "int" }],
       encode: { x: 0, y: 1, tooltip: 1 },
       ...lineDensityOptions(validPoints.length),
       lineStyle: { color, width: 3 },
@@ -221,7 +222,7 @@ export const buildFollowerChartOption = ({
       trigger: "axis",
       axisPointer: {
         type: "line",
-        label: { formatter: (params: { value: string | number }) => `${formatAxisTime(params.value)} · 采样值` },
+        label: { formatter: (params: { value: string | number }) => t("{value0} · 采样值", { value0: formatAxisTime(params.value) }) },
       },
       valueFormatter: (value: unknown) => formatAxisNumber(Number(value)),
     },
@@ -238,7 +239,7 @@ export const buildFollowerChartOption = ({
     },
     yAxis: {
       type: "value",
-      name: "粉丝数",
+      name: t("粉丝数"),
       show: !compact,
       nameLocation: "end",
       nameGap: 10,
@@ -250,10 +251,10 @@ export const buildFollowerChartOption = ({
     },
     series: [{
       id: "followers",
-      name: "粉丝数",
+      name: t("粉丝数"),
       type: "line",
       data: validPoints,
-      dimensions: [{ name: "时间", type: "time" }, { name: "粉丝数", type: "float" }, { name: "同步", type: "ordinal" }, { name: "顺序", type: "int" }],
+      dimensions: [{ name: t("时间"), type: "time" }, { name: t("粉丝数"), type: "float" }, { name: t("同步"), type: "ordinal" }, { name: t("顺序"), type: "int" }],
       encode: { x: 0, y: 1, tooltip: 1 },
       ...lineDensityOptions(validPoints.length),
       sampling: validPoints.length > 24 ? "lttb" : undefined,
@@ -278,7 +279,7 @@ export const buildAbsoluteCompareChartOption = ({
   range?: ChartTimeRange;
 }): EChartsCoreOption => {
   const label = DASHBOARD_CHART_METRIC_LABELS[metric];
-  const valueLabel = valueMode === "delta" ? `${label}增量` : `${label}总数`;
+  const valueLabel = valueMode === "delta" ? t("{value0}增量", { value0: label }) : t("{value0}总数", { value0: label });
   const { start, end, hours } = compareBucketLayout(series.flatMap((item) => item.points), range);
   const normalized = series.map((item) => {
     const points = normalizeTimePoints(item.points);
@@ -313,9 +314,9 @@ export const buildAbsoluteCompareChartOption = ({
       axisPointer: {
         type: "line",
         label: { formatter: (params: { value: string | number }) => {
-          if (valueMode === "total") return `${formatAxisTime(params.value)} · 采样值`;
+          if (valueMode === "total") return t("{value0} · 采样值", { value0: formatAxisTime(params.value) });
           const point = normalized[0]?.points.find((point) => point[0] === Number(params.value));
-          return point ? `${formatAxisTime(Number(point[2]))} 至 ${formatAxisTime(Number(point[3]))} · 分段增量` : formatAxisTime(params.value);
+          return point ? t("{value0} 至 {value1} · 分段增量", { value0: formatAxisTime(Number(point[2])), value1: formatAxisTime(Number(point[3])) }) : formatAxisTime(params.value);
         } },
       },
       valueFormatter: formatValue,
@@ -350,8 +351,8 @@ export const buildAbsoluteCompareChartOption = ({
       type: "line",
       data: item.points,
       dimensions: valueMode === "delta"
-        ? [{ name: "时间", type: "time" }, { name: valueLabel, type: "float" }, { name: "段起点", type: "time" }, { name: "段终点", type: "time" }]
-        : [{ name: "时间", type: "time" }, { name: valueLabel, type: "float" }, { name: "同步", type: "ordinal" }, { name: "顺序", type: "int" }],
+        ? [{ name: t("时间"), type: "time" }, { name: valueLabel, type: "float" }, { name: t("段起点"), type: "time" }, { name: t("段终点"), type: "time" }]
+        : [{ name: t("时间"), type: "time" }, { name: valueLabel, type: "float" }, { name: t("同步"), type: "ordinal" }, { name: t("顺序"), type: "int" }],
       encode: { x: 0, y: 1, tooltip: 1 },
       ...lineDensityOptions(item.points.length),
       ...(valueMode === "delta" ? { smooth: false, showSymbol: true, symbolSize: 5 } : {}),
@@ -384,7 +385,7 @@ export const buildGrowthChartOption = ({
       trigger: "axis",
       axisPointer: {
         type: "line",
-        label: { formatter: (params: { value: string | number }) => `${formatAxisTime(params.value)} · 采样值` },
+        label: { formatter: (params: { value: string | number }) => t("{value0} · 采样值", { value0: formatAxisTime(params.value) }) },
       },
       valueFormatter: (value: unknown) => formatAxisNumber(Number(value)),
     },
@@ -397,7 +398,7 @@ export const buildGrowthChartOption = ({
     },
     yAxis: {
       type: "value",
-      name: `${label}总数`,
+      name: t("{value0}总数", { value0: label }),
       nameLocation: "end",
       nameGap: 10,
       nameRotate: 0,
@@ -407,10 +408,10 @@ export const buildGrowthChartOption = ({
     },
     series: [{
       id: "growth",
-      name: `${label}总数`,
+      name: t("{value0}总数", { value0: label }),
       type: "line",
       data: normalized,
-      dimensions: [{ name: "时间", type: "time" }, { name: `${label}总数`, type: "float" }, { name: "同步", type: "ordinal" }, { name: "顺序", type: "int" }],
+      dimensions: [{ name: t("时间"), type: "time" }, { name: t("{value0}总数", { value0: label }), type: "float" }, { name: t("同步"), type: "ordinal" }, { name: t("顺序"), type: "int" }],
       encode: { x: 0, y: 1, tooltip: 1 },
       ...lineDensityOptions(normalized.length),
       lineStyle: { color, width: 3 },

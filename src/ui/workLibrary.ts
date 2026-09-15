@@ -1,18 +1,19 @@
+import { t } from "../i18n";
 import type { IntradayWorkAnalysis } from "../domain/intraday";
 import type { WorkAnalysis, WorkMetrics } from "../domain/types";
 import { metricValue } from "./helpers";
 
 export const WORK_SORT_OPTIONS = [
-  { value: "publishedAt", label: "发布时间" },
-  { value: "views", label: "浏览总量" },
-  { value: "bookmarks", label: "收藏总量" },
-  { value: "likes", label: "赞总量" },
-  { value: "todayViews", label: "今日浏览" },
-  { value: "todayBookmarks", label: "今日收藏" },
-  { value: "todayLikes", label: "今日赞" },
-  { value: "todayComments", label: "今日评论" },
-  { value: "lastSeenAt", label: "最近观察" },
-  { value: "title", label: "作品标题" },
+  { value: "publishedAt", label: t("发布时间") },
+  { value: "views", label: t("浏览总量") },
+  { value: "bookmarks", label: t("收藏总量") },
+  { value: "likes", label: t("赞总量") },
+  { value: "todayViews", label: t("今日浏览") },
+  { value: "todayBookmarks", label: t("今日收藏") },
+  { value: "todayLikes", label: t("今日赞") },
+  { value: "todayComments", label: t("今日评论") },
+  { value: "lastSeenAt", label: t("最近观察") },
+  { value: "title", label: t("作品标题") },
 ] as const;
 
 export type WorkSortKey = (typeof WORK_SORT_OPTIONS)[number]["value"];

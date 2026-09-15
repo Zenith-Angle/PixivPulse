@@ -1,3 +1,4 @@
+import { getLocale } from "../i18n/locale";
 /** The timezone used for all business-day calculations and human-facing time. */
 export const BUSINESS_TIME_ZONE = "Asia/Shanghai" as const;
 export const BUSINESS_TIME_ZONE_LABEL = "北京时间（UTC+8）" as const;
@@ -221,7 +222,7 @@ export function formatBeijingTimestamp(
   const timestamp = parseInstant(value);
   if (timestamp == null) return null;
   try {
-    return new Intl.DateTimeFormat("zh-CN-u-nu-latn", {
+    return new Intl.DateTimeFormat(`${getLocale()}-u-nu-latn`, {
       timeZone: BUSINESS_TIME_ZONE,
       ...(options.includeYear ? { year: "numeric" as const } : {}),
       month: "numeric",

@@ -1,0 +1,11 @@
+{
+  "extensionName": {
+    "message": "PixivPulse - 作者增长追踪"
+  },
+  "extensionDescription": {
+    "message": "记录 Pixiv 全部作品的增长快照，在本地查看趋势、转化率与可选 AI 分析。"
+  },
+  "actionTitle": {
+    "message": "打开 PixivPulse 面板"
+  }
+}

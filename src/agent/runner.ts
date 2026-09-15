@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import type { ResponseInputItem } from "openai/resources/responses/responses";
 import type { DashboardData } from "../domain/types";
 import { readingLimits, validateConfig } from "./config";
@@ -33,11 +34,11 @@ export interface RunHooks {
 export async function runAgent(config: AgentConfig, messages: AgentMessage[], data: DashboardData, isPreview: boolean, signal: AbortSignal, hooks: RunHooks): Promise<void> {
   const c = validateConfig(config);
   signal.throwIfAborted();
-  hooks.onProgress?.("检查可用数据与阅读权限");
+  hooks.onProgress?.(t("检查可用数据与阅读权限"));
   const memory = c.shareData ? await openKnowledgeMemory(data, isPreview, c.memoryEnabled) : null;
   const mode = analysisMode(c, messages);
   const intent = analysisIntent(messages);
-  hooks.onStatus?.(SERVICE_STATUS[intent]);
+  hooks.onStatus?.(t(SERVICE_STATUS[intent]));
   const archive = new EvidenceArchive();
   const resultSources = new Map<string, string>();
   const evidenceBytes = { content: 0, statistics: 0 };
@@ -68,27 +69,27 @@ export async function runAgent(config: AgentConfig, messages: AgentMessage[], da
   const readPositions = new Map<string, { startCharacter: number; endCharacter: number }[]>();
   const readVersions = new Map<string, string>();
   const sampleForRun = async (args: Record<string, unknown>, maxChars: number) => {
-    if (readingBlocked) throw new AgentError(`本问正文读取已停止：${readingBlocked}。没有备用读取通道，不要重试。`);
+    if (readingBlocked) throw new AgentError(t("本问正文读取已停止：{value1}。没有备用读取通道，不要重试。", { value1: readingBlocked }));
     const key = String(args.workKey);
     const previous = readCounts.get(key);
     const { fraction, maxChars: ceiling } = readingLimits(c);
     if (previous) maxChars = Math.min(maxChars, ceiling - previous.characters, Math.floor(previous.total * fraction) - previous.characters);
-    if (maxChars < 150) throw new AgentError("该作品本问的正文采样额度已用完，请依据已读片段分析。");
+    if (maxChars < 150) throw new AgentError(t("该作品本问的正文采样额度已用完，请依据已读片段分析。"));
 
-    hooks.onProgress?.(`读取正文：《${data.works.find(work => work.key === key)?.title ?? "所选作品"}》`);
+    hooks.onProgress?.(t("读取正文：《{value1}》", { value1: data.works.find(work => work.key === key)?.title ?? t("所选作品") }));
     let item;
-    try { item = await readNovelSample(data, args, signal, c.memoryEnabled, { maxChars, fraction, exclude: readPositions.get(key) ?? [] }, detail => hooks.onReading?.({ key, title: data.works.find(work => work.key === key)?.title ?? "所选作品", status: "reading", detail })); }
+    try { item = await readNovelSample(data, args, signal, c.memoryEnabled, { maxChars, fraction, exclude: readPositions.get(key) ?? [] }, detail => hooks.onReading?.({ key, title: data.works.find(work => work.key === key)?.title ?? t("所选作品"), status: "reading", detail })); }
     catch (error) { signal.throwIfAborted(); readingBlocked = (error as Error).message; throw new AgentError(readingBlocked); }
     const result = item.result as { sampledCharacters?: number; totalCharacters?: number; contentFingerprint?: string; excerpts?: { startCharacter: number; endCharacter: number }[] };
     if (result.contentFingerprint) {
       if (readVersions.has(key) && readVersions.get(key) !== result.contentFingerprint) {
-        readingBlocked = "补读时正文版本发生变化，已停止合并覆盖率；已有来源仅代表先前版本。";
+        readingBlocked = t("补读时正文版本发生变化，已停止合并覆盖率；已有来源仅代表先前版本。");
         throw new AgentError(readingBlocked);
       }
       readVersions.set(key, result.contentFingerprint);
     }
     if (result.excerpts?.length) readPositions.set(key, [...(readPositions.get(key) ?? []), ...result.excerpts.map(({ startCharacter, endCharacter }) => ({ startCharacter, endCharacter }))]);
-    hooks.onProgress?.(`${item.cached ? "复用正文片段" : "读完正文片段"}：《${data.works.find(work => work.key === key)?.title ?? "所选作品"}》${Number.isFinite(result.sampledCharacters) ? ` · ${result.sampledCharacters} 字符` : ""}`);
+    hooks.onProgress?.(`${item.cached ? t("复用正文片段") : t("读完正文片段")}：《${data.works.find(work => work.key === key)?.title ?? t("所选作品")}》${Number.isFinite(result.sampledCharacters) ? t(" · {value1} 字符", { value1: result.sampledCharacters ?? 0 }) : ""}`);
     if (Number.isFinite(result.sampledCharacters) && Number.isFinite(result.totalCharacters)) {
       readCounts.set(key, { characters: (previous?.characters ?? 0) + result.sampledCharacters!, total: Math.min(previous?.total ?? Infinity, result.totalCharacters!) });
     }
@@ -120,22 +121,22 @@ export async function runAgent(config: AgentConfig, messages: AgentMessage[], da
     const requestSystem = readingBlocked ? turnSystem + "\nOriginal reading has failed; ALL tools are now closed for this question. Report the original error accurately; local cooldown is NOT a new HTTP 429. Do not claim to wait, switch channels, or try again. Never suggest starting a new conversation to reset the quota or bypass a restriction. Do not claim content type or absence of a series from incomplete metadata. A parser/schema error does not prove the author disabled reading or that the work is inaccessible; describe it as a reader compatibility failure unless an explicit HTTP permission error was received. Original failure: " + readingBlocked : turnSystem;
     usage.contextBytes = byteLength(JSON.stringify({ system: requestSystem, messages: c.protocol === "chat" ? chat : input, tools: activeTools }));
     hooks.onUsage({ ...usage });
-    const stage = `第 ${step + 1} 步 · `;
-    const nextAction = completedStages.length ? `已完成${completedStages.slice(-3).join("、")}；正在核对证据并决定下一步。` : "正在分析问题，确定需要核对的证据。";
+    const stage = t("第 {value1} 步 · ", { value1: step + 1 });
+    const nextAction = completedStages.length ? t("已完成{value1}；正在核对证据并决定下一步。", { value1: completedStages.slice(-3).join("、") }) : t("正在分析问题，确定需要核对的证据。");
     hooks.onProgress?.(stage + nextAction);
     // This is an advisory checkpoint, never a quota or reason to reject a read.
     let efficientSystem = notebook.activeBytes > 24000 && !final ? requestSystem + "\nWorking evidence is growing. At this milestone, report one observed finding and checkpoint the sources you no longer need verbatim using record_reading_notes. Continue gathering evidence as needed; this is not a limit." : requestSystem;
     if (rawQueries > 1) efficientSystem += "\nRaw records have already been inspected. Before any more pages, identify the specific unanswered question; use an aggregate for broader patterns. Share the substantive interim finding with the user. Do not collect more records simply to be thorough.";
-    const result = await generateTurn(c, efficientSystem, chat, input, activeTools, signal, text => { hooks.onStatus?.("正在组织分析结果"); hooks.onText(text); }, label => hooks.onProgress?.(stage + label + (label === "模型正在处理问题" && completedStages.length ? `：结合${completedStages.at(-1)}` : "")), (index, text) => hooks.onCommentary?.(`${step}:${index}`, text));
+    const result = await generateTurn(c, efficientSystem, chat, input, activeTools, signal, text => { hooks.onStatus?.(t("正在组织分析结果")); hooks.onText(text); }, label => hooks.onProgress?.(stage + label + (label === t("模型正在处理问题") && completedStages.length ? t("：结合{value1}", { value1: completedStages.at(-1) ?? "" }) : "")), (index, text) => hooks.onCommentary?.(`${step}:${index}`, text));
     usage.input += result.usage.input; usage.output += result.usage.output; usage.requests!++; usage.cachedInput! += result.usage.cachedInput ?? 0; hooks.onUsage({ ...usage });
     signal.throwIfAborted();
     if (!result.calls.length) {
-      if (/<[｜|]*DSML|<tool_call|<function_call/i.test(result.text)) throw new AgentError("模型返回了未执行的工具指令，而非最终回答。已有来源已保存，请重试或切换模型。");
-      if (!result.text.trim()) throw new AgentError("模型没有返回可显示的回答，请检查模型设置后重试。");
+      if (/<[｜|]*DSML|<tool_call|<function_call/i.test(result.text)) throw new AgentError(t("模型返回了未执行的工具指令，而非最终回答。已有来源已保存，请重试或切换模型。"));
+      if (!result.text.trim()) throw new AgentError(t("模型没有返回可显示的回答，请检查模型设置后重试。"));
       return;
     }
-    if (!activeTools.length) throw new AgentError("工具轮数已用完，模型仍要求调用工具。可提高轮数后重试。");
-    if (result.calls.length > 16 || new Set(result.calls.map((call) => call.id)).size !== result.calls.length) throw new AgentError("模型返回了无效或过多的工具调用。");
+    if (!activeTools.length) throw new AgentError(t("工具轮数已用完，模型仍要求调用工具。可提高轮数后重试。"));
+    if (result.calls.length > 16 || new Set(result.calls.map((call) => call.id)).size !== result.calls.length) throw new AgentError(t("模型返回了无效或过多的工具调用。"));
     chat.push(result.chat);
     input.push(...result.output);
     const commentaryWithAnswer = result.calls.every(call => call.name === "report_progress") && !!result.text.trim();
@@ -144,9 +145,9 @@ export async function runAgent(config: AgentConfig, messages: AgentMessage[], da
       else if (result.text) hooks.onText("\n\n");
     }
     const previousEvidence = evidenceRevision;
-    if (result.calls.some(call => call.name !== "report_progress")) hooks.onStatus?.(SERVICE_STATUS[intent]);
+    if (result.calls.some(call => call.name !== "report_progress")) hooks.onStatus?.(t(SERVICE_STATUS[intent]));
     for (const call of result.calls) {
-      if (!call.id || call.arguments.length > 20000) throw new AgentError("工具调用缺少 ID 或参数过长。");
+      if (!call.id || call.arguments.length > 20000) throw new AgentError(t("工具调用缺少 ID 或参数过长。"));
       signal.throwIfAborted();
       if (call.name === "report_progress") {
         let output = '{"ok":true}';
@@ -169,9 +170,9 @@ export async function runAgent(config: AgentConfig, messages: AgentMessage[], da
         chat.push({ role: "tool", tool_call_id: call.id, content: output }); input.push({ type: "function_call_output", call_id: call.id, output });
         continue;
       }
-      const operation: AgentActivity = { id: `${step}:${call.id}`, kind: "operation", text: "查询本地分析证据", status: "running", at: new Date().toISOString() };
+      const operation: AgentActivity = { id: `${step}:${call.id}`, kind: "operation", text: t("查询本地分析证据"), status: "running", at: new Date().toISOString() };
       hooks.onOperation?.(operation);
-      hooks.onProgress?.(call.name === "search_works" || call.name === "select_reading_samples" ? "正在定位作品" : call.name === "sample_novel" || call.name === "read_content_samples" ? "准备读取正文片段" : "正在查询本地分析证据");
+      hooks.onProgress?.(call.name === "search_works" || call.name === "select_reading_samples" ? t("正在定位作品") : call.name === "sample_novel" || call.name === "read_content_samples" ? t("准备读取正文片段") : t("正在查询本地分析证据"));
       const id = `S${++source}`;
       let payload: unknown;
       let cached = false;
@@ -186,9 +187,9 @@ export async function runAgent(config: AgentConfig, messages: AgentMessage[], da
         let evidence;
         const arg = args as Record<string, unknown>;
         const labels = TOOL_LABELS;
-        operation.text = isContent ? call.name === "read_content_samples" && Array.isArray(arg.workKeys) ? `采样 ${arg.workKeys.length} 篇正文` : "采样小说正文" : labels[call.name] ?? "查询本地分析证据";
+        operation.text = isContent ? call.name === "read_content_samples" && Array.isArray(arg.workKeys) ? t("采样 {value1} 篇正文", { value1: arg.workKeys.length }) : t("采样小说正文") : labels[call.name] ?? t("查询本地分析证据");
         hooks.onOperation?.({ ...operation });
-        if (!isContent) hooks.onProgress?.(`${labels[call.name] ?? "查询本地分析证据"}${typeof arg.query === "string" && arg.query ? `：${arg.query.slice(0, 80)}` : ""}`);
+        if (!isContent) hooks.onProgress?.(`${labels[call.name] ?? t("查询本地分析证据")}${typeof arg.query === "string" && arg.query ? `：${arg.query.slice(0, 80)}` : ""}`);
         const queryKey = evidenceKey(call.name, arg);
         const prior = resultSources.get(queryKey);
         if (call.name === "record_reading_notes") {
@@ -213,13 +214,13 @@ export async function runAgent(config: AgentConfig, messages: AgentMessage[], da
           const works = [];
           let hits = 0;
           const keys = arg.workKeys as string[];
-          if (keys.some(key => typeof key !== "string" || !data.works.some(work => work.key === key && work.type === "novel"))) throw new AgentError("部分作品不在本地小说列表中，请先定位有效作品。");
+          if (keys.some(key => typeof key !== "string" || !data.works.some(work => work.key === key && work.type === "novel"))) throw new AgentError(t("部分作品不在本地小说列表中，请先定位有效作品。"));
           const reading = (key: string, status: ReadingProgress["status"], fields: Partial<ReadingProgress> = {}) => hooks.onReading?.({ key, title: data.works.find(work => work.key === key)!.title, status, ...fields });
           for (const key of keys) reading(key, "queued");
           for (const [index, key] of keys.entries()) {
-            if (readingBlocked) { works.push({ workKey: key, error: `后续读取已停止：${readingBlocked}` }); reading(key, "skipped", { detail: "前一作品读取失败，已停止后续请求" }); continue; }
+            if (readingBlocked) { works.push({ workKey: key, error: t("后续读取已停止：{value1}", { value1: readingBlocked }) }); reading(key, "skipped", { detail: t("前一作品读取失败，已停止后续请求") }); continue; }
             reading(key, "reading");
-            hooks.onProgress?.(`读取正文 ${index + 1}/${keys.length}：《${data.works.find(work => work.key === key)!.title}》`);
+            hooks.onProgress?.(t("读取正文 {value1}/{value2}：《{value3}》", { value1: index + 1, value2: keys.length, value3: data.works.find(work => work.key === key)!.title }));
             try {
               const item = await sampleForRun({ workKey: key, focus: "balanced", keyword: "", refresh: arg.refresh }, chars);
               works.push(item.result); if (item.cached) hits++;
@@ -230,9 +231,9 @@ export async function runAgent(config: AgentConfig, messages: AgentMessage[], da
           usage.memoryHits! += hits;
           evidence = { cached: false, result: { works, readingLimit: chars, partial: true } };
         } else if (call.name === "sample_novel") {
-          if (!canRead) throw new AgentError("原文采样未开启。");
+          if (!canRead) throw new AgentError(t("原文采样未开启。"));
           const chars = c.readingDepth === "auto" ? 3000 : readingLimits(c).maxChars;
-          const key = String(arg.workKey), title = data.works.find(work => work.key === key)?.title ?? "所选作品";
+          const key = String(arg.workKey), title = data.works.find(work => work.key === key)?.title ?? t("所选作品");
           hooks.onReading?.({ key, title, status: "reading" });
           try { evidence = await sampleForRun(args as Record<string, unknown>, chars);
             const sample = evidence.result as { sampledCharacters?: number; coverage?: number };
@@ -258,7 +259,7 @@ export async function runAgent(config: AgentConfig, messages: AgentMessage[], da
       }
       evidenceBytes[isContent ? "content" : "statistics"] += new TextEncoder().encode(output).length;
       usage.evidenceBytes = { ...evidenceBytes }; hooks.onUsage({ ...usage });
-      hooks.onProgress?.(delivered.error ? "工具返回错误，交由模型处理" : cached ? "已复用本地证据" : "工具结果已返回，正在整理");
+      hooks.onProgress?.(delivered.error ? t("工具返回错误，交由模型处理") : cached ? t("已复用本地证据") : t("工具结果已返回，正在整理"));
       await hooks.onTrace({ id, name: call.name, arguments: call.arguments, result: original, cached, at: new Date().toISOString() });
       const failed = !!delivered.error || !!readingBlocked && isContent;
       hooks.onOperation?.({ ...operation, status: failed ? "error" : "complete", sourceId: id });
@@ -271,6 +272,6 @@ export async function runAgent(config: AgentConfig, messages: AgentMessage[], da
     // Public milestone updates are not failed/repeated evidence queries. Do not
     // close tools merely because the model reported two stages without a read.
     if (result.calls.some(call => call.name !== "report_progress")) stagnantTurns = evidenceRevision > previousEvidence ? 0 : stagnantTurns + 1;
-    hooks.onProgress?.("结合已获取的证据组织回答");
+    hooks.onProgress?.(t("结合已获取的证据组织回答"));
   }
 }
