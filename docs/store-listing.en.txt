@@ -1,0 +1,7 @@
+PixivPulse helps Pixiv creators track views, bookmarks, likes, and comments over time.
+
+Explore growth trends, compare works, and review bookmark conversion rates to see how your portfolio performs. Includes manual and scheduled syncing, data export and backup, and English and Simplified Chinese interfaces.
+
+Data stays on your device, and core features need no API key. You can also connect your own AI service for analysis. If you enable data sharing or text sampling, relevant data is sent to your configured provider.
+
+Requires signing in to Pixiv in your browser. History begins with your first collection. PixivPulse is an independent tool, not an official Pixiv product.

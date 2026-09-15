@@ -8,7 +8,7 @@ export const baseConfig = {
     short_name: "PixivPulse",
     description: "__MSG_extensionDescription__",
     default_locale: "en",
-    version: "0.5.17",
+    version: "0.5.16",
     minimum_chrome_version: "120",
     permissions: ["storage", "alarms", "unlimitedStorage", "declarativeNetRequestWithHostAccess"],
     host_permissions: ["https://www.pixiv.net/*", "https://i.pximg.net/*"],
