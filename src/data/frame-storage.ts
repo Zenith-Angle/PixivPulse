@@ -1,3 +1,4 @@
+import { beijingDateKey } from "../domain/time";
 import type { IDBPDatabase } from "idb";
 import {
   assignWorkOrdinal,
@@ -315,6 +316,31 @@ export function buildMetricFrameCompactionPlan(
   const nowMs = retentionNowMs(now);
   const ordered = [...frames].sort((left, right) =>
     compareMetricFrameRecords(left, right) || metricFrameIdentity(left).localeCompare(metricFrameIdentity(right)));
+  const dayAnchors = new Map<string, { first: MetricFrame; last: MetricFrame }>();
+  for (const frame of ordered) for (const ordinal of unpackMetricOrdinals(frame.observed)) {
+    const key = `${ordinal}:${beijingDateKey(frame.epochMs)}`;
+    const anchors = dayAnchors.get(key);
+    if (anchors) anchors.last = frame;
+    else dayAnchors.set(key, { first: frame, last: frame });
+  }
+  const protectedFrames = new Set<MetricFrame>();
+  const latestFields = new Map<number, Map<number, MetricFrame>>();
+  for (const frame of ordered) {
+    for (const change of frame.changes) {
+      const fields = latestFields.get(change[0]) ?? new Map<number, MetricFrame>();
+      for (const key of METRIC_FRAME_METRIC_KEYS) {
+        const bit = metricMaskForKey(key);
+        if (change[1] & bit) fields.set(bit, frame);
+      }
+      latestFields.set(change[0], fields);
+    }
+    for (const ordinal of unpackMetricOrdinals(frame.observed)) {
+      const anchors = dayAnchors.get(`${ordinal}:${beijingDateKey(frame.epochMs)}`)!;
+      if (anchors.first === frame || anchors.last === frame) {
+        for (const source of latestFields.get(ordinal)?.values() ?? []) protectedFrames.add(source);
+      }
+    }
+  }
   const fieldWinners = new Map<string, MetricFrame>();
   const rankingWinners = new Map<string, MetricFrame>();
   const firstChangeByOrdinal = new Map<number, MetricFrame>();
@@ -347,7 +373,7 @@ export function buildMetricFrameCompactionPlan(
   };
   for (const frame of ordered) {
     const bucket = frameBucket(frame, nowMs);
-    if (!bucket) continue;
+    if (!bucket || protectedFrames.has(frame)) continue;
     // Observation membership is semantic even for partial frames: a work can
     // reappear without changing a metric. The packed ordinal set is cheap, so
     // retain it while applying time thinning only to metric changes.

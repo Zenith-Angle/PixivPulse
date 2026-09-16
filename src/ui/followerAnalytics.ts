@@ -1,3 +1,4 @@
+import { dayBoundaryCoordinates, isMidnight, MIDNIGHT_GRACE_MS } from "../domain/day-boundary";
 import { beijingDayRange, parseInstant, type TimeInput } from "../domain/time";
 import type { AccountFollowerSample } from "../domain/types";
 import {
@@ -166,18 +167,21 @@ export function buildFollowerAnalytics(
   const currentPoint = normalizedSamples.at(-1) ?? null;
   const current = sampleValue(currentPoint);
   const range = resolveRange(options.range);
+  const coordinates = dayBoundaryCoordinates(normalizedSamples.map(p => p.timestamp));
+  const accountingAt = (point: FollowerSamplePoint) => coordinates.get(point.timestamp) ?? point.timestamp;
   const rangePoints = range == null
     ? []
     : normalizedSamples.filter((point) =>
-      (range.startMs == null || point.timestamp >= range.startMs)
-      && (range.endMs == null || point.timestamp <= range.endMs),
+      (range.startMs == null || accountingAt(point) >= range.startMs)
+      && (range.endMs == null || accountingAt(point) <= range.endMs && point.timestamp <= (isMidnight(range.endMs) ? Math.min(Date.now(), range.endMs + MIDNIGHT_GRACE_MS) : range.endMs)),
     );
   const rangeSamples = rangePoints.map(({ timestamp: _timestamp, ...sample }) => sample);
 
   const rangeStartMs = range?.startMs ?? null;
   const rangeBaselinePoint = rangeStartMs == null
     ? null
-    : normalizedSamples.filter((point) => point.timestamp < rangeStartMs).at(-1) ?? null;
+    : normalizedSamples.filter((point) => accountingAt(point) === rangeStartMs && rangePoints.includes(point)).at(-1)
+      ?? (!isMidnight(rangeStartMs) ? normalizedSamples.filter(point => point.timestamp < rangeStartMs).at(-1) : null) ?? null;
   const rangeBaseline = rangeBaselinePoint
     ? (({ timestamp: _timestamp, ...sample }) => sample)(rangeBaselinePoint)
     : null;
@@ -185,8 +189,8 @@ export function buildFollowerAnalytics(
 
   let rangeDelta = emptyDelta();
   if (rangeCurrent) {
-    if (rangeBaseline) {
-      rangeDelta = makeDelta(rangeBaseline, rangeCurrent, "exact");
+    if (rangeBaseline && !sameSample(rangeBaseline, rangeCurrent)) {
+      rangeDelta = makeDelta(rangeBaseline, rangeCurrent, rangeBaseline.collectedAt && parseInstant(rangeBaseline.collectedAt) === rangeStartMs ? "exact" : "approximate");
     } else if (rangeSamples.length >= 2) {
       rangeDelta = makeDelta(rangeSamples[0] ?? null, rangeCurrent, "approximate");
     } else {
@@ -217,17 +221,13 @@ export function buildFollowerAnalytics(
   const todayFirst = todayFirstPoint
     ? (({ timestamp: _timestamp, ...sample }) => sample)(todayFirstPoint)
     : null;
-  const todayBaselinePoint = day
-    ? normalizedSamples.filter((point) => point.timestamp < day.startMs).at(-1) ?? null
-    : null;
-  const todayBaseline = todayBaselinePoint
-    ? (({ timestamp: _timestamp, ...sample }) => sample)(todayBaselinePoint)
-    : null;
-  const today = todayBaseline && todayCurrent
-    ? makeDelta(todayBaseline, todayCurrent, "exact")
-    : todayPoints.length >= 2 && todayFirst && todayCurrent
-      ? makeDelta(todayFirst, todayCurrent, "approximate")
-      : makeDelta(todayBaseline, todayCurrent, "insufficient");
+  // Daily counts start at today's first observation, including an exact or
+  // estimated midnight reading. Yesterday's 23:30 value belongs to yesterday.
+  const today = todayPoints.length >= 2 && todayFirst && todayCurrent
+    && todayCurrentPoint!.timestamp > todayFirstPoint!.timestamp
+    ? makeDelta(todayFirst, todayCurrent, todayFirstPoint!.timestamp === day!.startMs ? "exact" : "approximate")
+    : { ...makeDelta(todayFirst, todayCurrent, "insufficient"), value: null };
+
 
   return {
     accountId: options.accountId ?? null,

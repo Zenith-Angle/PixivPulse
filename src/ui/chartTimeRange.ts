@@ -1,3 +1,4 @@
+import { isMidnight } from "../domain/day-boundary";
 import type { ChartTimePoint } from "./chartOptions";
 import { beijingDayRange, parseInstant, type TimeInput } from "../domain/time";
 
@@ -22,7 +23,7 @@ export interface ChartTimeRangeRequest {
  * Resolved inclusive chart bounds, expressed as UTC milliseconds.
  *
  * `null` means unbounded (the `all` preset). Both bounds are inclusive so a
- * custom end date includes the whole Beijing day and a minute-level end
+ * custom end date includes the closing midnight of the Beijing day and a minute-level end
  * includes that minute's final millisecond.
  */
 export interface ChartTimeRange {
@@ -68,7 +69,7 @@ function startBoundary(value: TimeInput): number | null {
 function endBoundary(value: TimeInput): number | null {
   if (isDateOnly(value)) {
     const day = beijingDayRange(value);
-    return day == null ? null : day.endMs - 1;
+    return day == null ? null : day.endMs;
   }
 
   const timestamp = parseInstant(value);
@@ -76,7 +77,7 @@ function endBoundary(value: TimeInput): number | null {
 
   // A minute-level datetime is a user-selected minute, not merely its first
   // millisecond. Keep the whole minute in a custom range.
-  return isMinutePrecision(value) ? addMilliseconds(timestamp, 59_999) : timestamp;
+  return isMinutePrecision(value) ? addMilliseconds(timestamp, isMidnight(timestamp + 60_000) ? 60_000 : 59_999) : timestamp;
 }
 
 function isResolvedRange(value: ChartTimeRangeInput): value is ChartTimeRange {
@@ -114,6 +115,7 @@ export function resolveChartTimeRange(input: ChartTimeRangeRequest = {}): ChartT
   }
 
   if (preset !== "custom" || input.start == null || input.end == null) return null;
+  if (isDateOnly(input.start) && isDateOnly(input.end) && (startBoundary(input.start) ?? Infinity) > (startBoundary(input.end) ?? -Infinity)) return null;
   const startMs = startBoundary(input.start);
   const endMs = endBoundary(input.end);
   if (startMs == null || endMs == null || endMs < startMs) return null;

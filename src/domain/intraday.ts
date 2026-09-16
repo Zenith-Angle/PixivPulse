@@ -1,7 +1,8 @@
 import type { ObservationBatch, WorkMetrics, WorkObservation, WorkRecord, WorkSample } from "./types";
+import { MIDNIGHT_GRACE_MS } from "./day-boundary";
 import { beijingDayRange, parseInstant } from "./time";
 
-export type IntradayBaselineLabel = "estimated" | "partial";
+export type IntradayBaselineLabel = "exact" | "estimated" | "partial";
 
 export interface IntradayPoint {
   observedAt: string;
@@ -278,8 +279,7 @@ export function buildIntradayAnalytics(input: IntradayAnalyticsInput): IntradayP
   const date = day.date;
   const midnight = day.startMs;
   const observationCeiling = Math.min(now, day.endMs - 1);
-  const intervalHours = input.configuredIntervalHours ?? input.syncIntervalHours ?? 1;
-  const baselineWindowMs = Math.max(2 * 60 * 60_000, Math.max(0, intervalHours) * 2 * 60 * 60_000);
+  const baselineWindowMs = MIDNIGHT_GRACE_MS;
   const workKeys = inputWorkKeys(input);
   const normalized = normalizedObservations(input);
   const samplesByWork = indexSamples(input.samples);
@@ -307,7 +307,7 @@ export function buildIntradayAnalytics(input: IntradayAnalyticsInput): IntradayP
     pointsByWork.set(workKey, indexedPoints);
 
     const firstObservationAt = observations[0]?.timestamp ?? null;
-    const baselineLabel: IntradayBaselineLabel = firstObservationAt != null && firstObservationAt - midnight <= baselineWindowMs ? "estimated" : "partial";
+    const baselineLabel: IntradayBaselineLabel = firstObservationAt === midnight ? "exact" : firstObservationAt != null && firstObservationAt - midnight <= baselineWindowMs ? "estimated" : "partial";
     const baselineMetrics = cloneMetrics(points[0]?.metrics ?? emptyMetrics());
     const latestMetrics = points.at(-1)?.metrics ?? emptyMetrics();
     const changeSampleCount = samples.filter(({ sample, timestamp }) => {
@@ -321,14 +321,14 @@ export function buildIntradayAnalytics(input: IntradayAnalyticsInput): IntradayP
       sampleCount: observations.length,
       changeSampleCount,
       points,
-      delta: subtractMetrics(latestMetrics, baselineMetrics),
+      delta: indexedPoints.length >= 2 && indexedPoints.at(-1)!.timestamp > indexedPoints[0]!.timestamp ? subtractMetrics(latestMetrics, baselineMetrics) : emptyMetrics(),
     });
   }
 
   const points = aggregatePortfolioPoints(works, samplesByWork, pointsByWork, workKeys);
   return {
     date,
-    baselineLabel: works.length === 0 || works.some((work) => work.baselineLabel === "partial") ? "partial" : "estimated",
+    baselineLabel: works.length === 0 || works.some((work) => work.baselineLabel === "partial") ? "partial" : works.some(work => work.baselineLabel === "estimated") ? "estimated" : "exact",
     sampleCount: points.length,
     points,
     works,

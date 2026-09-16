@@ -1,3 +1,4 @@
+import { dayBoundaryCoordinates } from "../domain/day-boundary";
 import { t } from "../i18n";
 import type { ChartTimePoint } from "./chartOptions";
 import type { ChartTimeRange } from "./chartTimeRange";
@@ -46,7 +47,8 @@ export function buildCompareBuckets(points: readonly ChartTimePoint[], start: nu
   for (let at = alignedStart; at < end; at += width) {
     buckets.push({ start: Math.max(start, at), end: Math.min(end, at + width), value: null });
   }
-  const ordered = points.map((point, index) => ({ ...point, time: Date.parse(point.at), order: point.sequence ?? index }))
+  const coordinates = dayBoundaryCoordinates(points.map(point => Date.parse(point.at)));
+  const ordered = points.map((point, index) => ({ ...point, time: coordinates.get(Date.parse(point.at)) ?? Date.parse(point.at), order: point.sequence ?? index }))
     .filter((point) => Number.isFinite(point.time) && point.time <= end)
     .sort((a, b) => a.time - b.time || a.order - b.order);
   let previous: typeof ordered[number] | undefined;

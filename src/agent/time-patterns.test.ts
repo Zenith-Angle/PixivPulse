@@ -104,4 +104,11 @@ describe("local temporal aggregates", () => {
     expect(JSON.stringify(result)).not.toContain("workKey");
     expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(20000);
   });
+  it("assigns a slightly delayed midnight reading to the preceding day without double counting", () => {
+    const data = fixture([["a", time(23, 30, 1), metrics(100)], ["a", time(0, 2, 2), metrics(110)], ["a", time(0, 30, 2), metrics(115)]]);
+    const daily = query(data, { dimension: "date" });
+    expect(daily.rows.map(row => row.values[0]![0])).toEqual([10, 5]);
+    expect(daily.summary[0]!.observedNetChange).toBe(15);
+  });
+
 });

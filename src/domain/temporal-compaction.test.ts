@@ -36,7 +36,7 @@ describe("temporal compaction", () => {
       sample(4, "2026-09-01T03:55:00.000Z", 40),
     ];
     const plan = reduceTemporalCompaction(rows, NOW);
-    expect(plan.deleteIds).toEqual([1, 2]);
+    expect(plan.deleteIds).toEqual([2]);
     expect(plan.kept.map((row) => row.id)).toContain(3);
     expect(plan.updates.every((row) => row.compactionLevel === "30m")).toBe(true);
   });
@@ -49,7 +49,7 @@ describe("temporal compaction", () => {
       sample(4, "2026-09-02T05:30:00.000Z", 40),
     ];
     const plan = reduceTemporalCompaction(rows, NOW);
-    expect(plan.deleteIds).toEqual([1]);
+    expect(plan.deleteIds).toEqual([]);
     expect(plan.updates.some((row) => row.id === 2 && row.compactionLevel === "1h")).toBe(true);
     expect(plan.skipped).toBeGreaterThanOrEqual(1);
   });

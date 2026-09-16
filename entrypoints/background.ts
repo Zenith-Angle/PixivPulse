@@ -1,3 +1,4 @@
+import { isMidnight, MIDNIGHT_GRACE_MS } from "../src/domain/day-boundary";
 import { defineBackground } from "wxt/utils/define-background";
 import { browser } from "wxt/browser";
 import {
@@ -265,6 +266,13 @@ export function pendingScheduledDisposition(
   now = Date.now(),
 ): "start" | "retain" | "drop" {
   if (!state) return "start";
+  // A run started before midnight may contain yesterday's page reads even
+  // when it finishes after midnight. Queue one boundary observation instead
+  // of silently dropping this slot behind the previous automatic run.
+  if (isMidnight(slotAt) && state.trigger === "scheduled" && Date.parse(state.startedAt) < slotAt) {
+    if (now - slotAt > MIDNIGHT_GRACE_MS) return "drop";
+    return isActiveSyncState(state, now) ? "retain" : "start";
+  }
   if (state.trigger === "scheduled") {
     if (isActiveSyncState(state, now)) return "drop";
     const updatedAt = Date.parse(state.updatedAt);

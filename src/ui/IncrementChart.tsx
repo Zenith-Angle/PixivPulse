@@ -18,7 +18,7 @@ export function IncrementChart({ points, metric, range, name }: { points: ChartT
     <div className="increment-heading"><h3>{t("{value0}增量", { value0: label })}</h3><span>{t("每 {value0} · 与上方范围一致", { value0: compareBucketLabel(layout.hours) })}</span></div>
     <EChartsHost option={option} hasData={buckets.some((bucket) => bucket.value !== null)} presentation="buckets" height={190}
       ariaLabel={t("{value0}{value1}分段增量图", { value0: name, value1: label })} emptyMessage={t("所选范围内尚无可计算的增量，至少需要两次有效观察。")}
-      summary={t("每 {value0} 的已观察净增量；无观察时段留空，负值表示回落。", { value0: compareBucketLabel(layout.hours) })} />
+      summary={<>{t("每 {value0} 的已观察净增量；无观察时段留空，负值表示回落。", { value0: compareBucketLabel(layout.hours) })} {t("零点后 5 分钟内的首测作为估算日界，同时结算前一天并建立新一天基线；缺测不补零。")}</>} />
   </section>;
 }
 

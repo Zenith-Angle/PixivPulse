@@ -179,11 +179,12 @@ export function EChartsHost({
     }
   }, [option, reducedMotion, ariaLabel, compact, presentation]);
 
-  const style = { height: typeof height === "number" ? `${height}px` : height };
+  const chartHeight = typeof height === "number" ? `${height}px` : height;
+  const style = { minHeight: chartHeight, height: "auto" };
   return (
     <div className={cn("echarts-host", className)} style={style}>
-      {hasData && !compact && <span className="chart-trend-label">{presentation === "buckets" ? t("分段净增量") : t("平滑趋势")}</span>}
-      {hasData ? <div ref={chartElementRef} className={cn("echarts-canvas", rendered && "echarts-rendered")} role="img" aria-label={ariaLabel} aria-describedby={summaryId} /> : <div className="chart-empty" role="img" aria-label={ariaLabel} aria-describedby={summaryId}><span aria-hidden="true">∿</span><span>{emptyMessage}</span></div>}
+      {hasData && !compact && <span className="chart-trend-label">{presentation === "buckets" ? t("分段净增量") : getChartTimeExtent(option)?.[0] === getChartTimeExtent(option)?.[1] ? t("采样点") : t("平滑趋势")}</span>}
+      {hasData ? <div key="canvas" style={{ height: chartHeight }} ref={chartElementRef} className={cn("echarts-canvas", rendered && "echarts-rendered")} role="img" aria-label={ariaLabel} aria-describedby={summaryId} /> : <div key="empty" style={{ minHeight: chartHeight }} className="chart-empty" role="img" aria-label={ariaLabel} aria-describedby={summaryId}><span aria-hidden="true">∿</span><span>{emptyMessage}</span></div>}
       <p id={summaryId} className="chart-summary">{summary}</p>
     </div>
   );

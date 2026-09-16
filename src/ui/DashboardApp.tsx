@@ -1,3 +1,5 @@
+import { beijingDateKey, beijingDayRange } from "../domain/time";
+import { buildDailySummary } from "../domain/daily-summary";
 import { t } from "../i18n";
 import { LanguagePicker } from "../i18n/LanguagePicker";
 import { displayedSyncStatus, latestSyncResultAt } from "./syncPresentation";
@@ -211,7 +213,8 @@ const currentMetrics = (analysis: WorkAnalysis): WorkMetrics => analysis.latestS
 const sumMetric = (analyses: WorkAnalysis[], key: keyof WorkMetrics): number =>
   analyses.reduce((total, analysis) => total + (metricValue(analysis, key) ?? 0), 0);
 
-const statusFor = (analysis: WorkAnalysis): "history" | "baseline" | "updated" => {
+const statusFor = (analysis: WorkAnalysis, intraday?: IntradayWorkAnalysis | null): "history" | "baseline" | "updated" => {
+  if (intraday !== undefined) return intraday?.delta.views == null ? "baseline" : intraday.delta.views > 0 ? "updated" : "history";
   if (!analysis.previousSample) return "baseline";
   return (analysis.lastDelta.views.value ?? 0) > 0 ? "updated" : "history";
 };
@@ -236,7 +239,7 @@ const useBeijingDateRevision = (): number => {
   return revision;
 };
 
-const baselineLabel = (label: IntradayPortfolioAnalysis["baselineLabel"]): string => label === "estimated" ? t("今日首测基线 · 接近日界") : t("今日首测基线 · 部分日");
+const baselineLabel = (label: IntradayPortfolioAnalysis["baselineLabel"]): string => label === "exact" ? t("零点基线 · 北京时间") : label === "estimated" ? t("零点附近基线 · 估算日界") : t("今日首测基线 · 部分日");
 
 const todayDelta = (analysis: IntradayWorkAnalysis | null | undefined, key: keyof WorkMetrics): number | null => analysis?.delta[key] ?? null;
 
@@ -459,7 +462,7 @@ function Sidebar({ activeTab, onChange, onOpenOnboarding }: { activeTab: Dashboa
         <LanguagePicker />
         <div className="local-badge"><span className="status-dot" />{t("数据保存在本机")}</div>
         <button type="button" className="help-link" onClick={onOpenOnboarding} title={t("重新查看首次使用说明")}><Info size={15} aria-hidden="true" />{t("使用说明")}</button>
-        <p className="version-label">{t("PixivPulse 0.5.16 · 本地优先")}</p>
+        <p className="version-label">{t("PixivPulse 0.5.17 · 本地优先")}</p>
       </div>
     </aside>
   );
@@ -583,7 +586,7 @@ const buildInsights = (analyses: WorkAnalysis[], intraday?: IntradayPortfolioAna
     });
   }
   const noChange = intraday
-    ? intradayEligible.filter((work) => (work.delta.views ?? 0) === 0).length
+    ? intradayEligible.filter((work) => work.delta.views === 0).length
     : withHistory.filter((analysis) => (analysis.lastDelta.views.value ?? 0) === 0).length;
   if (noChange > 0) {
     insights.push({
@@ -676,10 +679,10 @@ const resolvedRange = (value: ChartRangeControlValue): ChartTimeRange | null => 
 const chartRangeLabel = (value: ChartRangeControlValue): string => value.preset === "24h" ? t("近24小时") : value.preset === "today" ? t("今日") : value.preset === "3d" ? t("近3天") : value.preset === "7d" ? t("近7天") : value.preset === "30d" ? t("近30天") : value.preset === "3m" ? t("近3个月") : value.preset === "all" ? t("全部历史") : t("自定义范围");
 
 const portfolioTimelineDelta = (timeline: readonly PortfolioTimelinePoint[]): PortfolioTimelinePoint["metrics"] => {
-  const first = timeline[0]?.metrics;
-  const last = timeline.at(-1)?.metrics;
+  const first = timeline[0]?.growth ?? timeline[0]?.metrics;
+  const last = timeline.at(-1)?.growth ?? timeline.at(-1)?.metrics;
   const result = { views: null, bookmarks: null, likes: null, comments: null } as PortfolioTimelinePoint["metrics"];
-  if (!first || !last || timeline.length < 2) return result;
+  if (!first || !last || timeline.length < 2 || timeline.every(point => point.incrementObserved === false)) return result;
   for (const key of ["views", "bookmarks", "likes", "comments"] as const) {
     result[key] = first[key] == null || last[key] == null ? null : last[key] - first[key];
   }
@@ -693,8 +696,8 @@ function PortfolioChart({ timeline, rangeValue, onRangeChange, pending = false }
   const option = useMemo(() => buildPortfolioChartOption({ points, metric }), [metric, points]);
   const label = DASHBOARD_CHART_METRIC_LABELS[metric];
   const latest = validPoints.at(-1)?.value ?? null;
-  const incrementPoints = useMemo(() => timeline.map((point) => ({ at: point.at, value: point.metrics[metric], runId: point.runId })), [timeline, metric]);
-  const range = useMemo(() => resolvedRange(rangeValue), [rangeValue]);
+  const incrementPoints = useMemo(() => timeline.filter((point, index) => index === 0 || point.incrementObserved !== false).map((point) => ({ at: point.at, value: (point.growth ?? point.metrics)[metric], runId: point.runId })), [timeline, metric]);
+  const range = resolvedRange(rangeValue);
   return (
     <div className={cn("chart-panel", pending && "range-pending")} data-testid="portfolio-chart" aria-busy={pending}>
       <div className="chart-control-row"><MetricSelector value={metric} onChange={setMetric} label={t("作品集图表指标")} /><ChartRangeControl value={rangeValue} onChange={onRangeChange} ariaLabel={t("作品集图表时间范围")} presetOrder={OVERVIEW_RANGE_PRESET_ORDER} /></div>
@@ -721,7 +724,7 @@ function FollowerGrowthSection({ data, rangeValue, onRangeChange, pending, anima
   const [expanded, setExpanded] = useState(false);
   const dateRevision = useBeijingDateRevision();
   const samples = accountFollowerSamplesFor(data);
-  const range = useMemo(() => resolvedRange(rangeValue), [rangeValue]);
+  const range = resolvedRange(rangeValue);
   const accountId = data.settings.boundAccount?.id ?? null;
   const analytics = useMemo(() => buildFollowerAnalytics(samples, {
     accountId,
@@ -790,12 +793,11 @@ function FollowerGrowthSection({ data, rangeValue, onRangeChange, pending, anima
   </>;
 }
 
-function TopMover({ analysis, onOpen }: { analysis: WorkAnalysis; onOpen: () => void }) {
-  const delta = analysis.lastDelta.views.value;
+function TopMover({ analysis, delta, onOpen }: { analysis: WorkAnalysis; delta: number | null; onOpen: () => void }) {
   return (
     <button type="button" className="mover-row" onClick={onOpen}>
       <Thumbnail work={analysis.work} />
-      <span className="mover-main"><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentTypeForWork(analysis.work))} · {formatElapsed(analysis.lastDelta.views.elapsedHours)}</small></span>
+      <span className="mover-main"><strong>{analysis.work.title}</strong><small>{contentTypeLabel(contentTypeForWork(analysis.work))} · {t("今日浏览")}</small></span>
       <span className={cn("mover-value", (delta ?? 0) >= 0 ? "positive" : "negative")}>{delta === null ? "—" : <>{(delta ?? 0) >= 0 ? <ArrowUpRight size={15} aria-hidden="true" /> : <ArrowDownRight size={15} aria-hidden="true" />}<AnimatedNumber value={formatDelta(delta)} /></>}</span>
       <ChevronRight size={16} className="row-chevron" aria-hidden="true" />
     </button>
@@ -837,7 +839,7 @@ export function OverviewView({ analyses, data, intraday: suppliedIntraday, onOpe
   const intraday = useMemo(() => suppliedIntraday ?? buildIntradayAnalytics({ works: data.works, samples: data.samples, observations: data.observations, observationBatches: data.observationBatches ?? [], configuredIntervalHours: data.settings.syncIntervalHours }), [data.observationBatches, data.observations, data.samples, data.settings.syncIntervalHours, data.works, suppliedIntraday]);
   const [rangeValue, setRangeValue] = useState<ChartRangeControlValue>(OVERVIEW_DEFAULT_CHART_RANGE);
   const [rangePending, startRangeTransition] = useTransition();
-  const range = useMemo(() => resolvedRange(rangeValue), [rangeValue]);
+  const range = resolvedRange(rangeValue);
   const portfolioTimeline = useMemo(() => range ? buildPortfolioTimeline(data.works.map((work) => work.key), data.samples, data.observations, range, data.observationBatches) : [], [data.observationBatches, data.observations, data.samples, data.works, range]);
   const currentTotal = useMemo(() => analyses.length > 0 ? ({
     views: sumMetric(analyses, "views"),
@@ -847,11 +849,14 @@ export function OverviewView({ analyses, data, intraday: suppliedIntraday, onOpe
   }) : ({ views: null, bookmarks: null, likes: null, comments: null }), [analyses]);
   const rangeDelta = useMemo(() => rangeValue.preset === "today" ? intraday.delta : portfolioTimelineDelta(portfolioTimeline), [intraday.delta, portfolioTimeline, rangeValue.preset]);
   const rangeLabel = chartRangeLabel(rangeValue);
-  const rangeDeltaDetail = rangeValue.preset === "today" ? t("按今日首个检测点计算") : t("按范围起点基线计算");
+  const rangeDeltaDetail = rangeValue.preset === "today" ? (intraday.sampleCount === 0 ? t("今日尚未采样") : intraday.sampleCount < 2 ? t("基线已建立，等待下一次观察") : baselineLabel(intraday.baselineLabel)) : t("按范围起点基线计算");
   const setOverviewRange = (value: ChartRangeControlValue) => startRangeTransition(() => setRangeValue(value));
   const insights = buildInsights(analyses, intraday);
-  const movers = [...analyses].filter((analysis) => analysis.previousSample).sort((a, b) => (b.lastDelta.views.value ?? -Infinity) - (a.lastDelta.views.value ?? -Infinity)).slice(0, 3);
+  const todayByWork = new Map(intraday.works.map(work => [work.workKey, work.delta.views]));
+  const movers = [...analyses].filter(analysis => (todayByWork.get(analysis.work.key) ?? 0) > 0).sort((a, b) => todayByWork.get(b.work.key)! - todayByWork.get(a.work.key)!).slice(0, 3);
   const rounds = intraday.sampleCount;
+  const yesterdayDate = beijingDateKey((beijingDayRange(intraday.date)?.startMs ?? Date.now()) - 1)!;
+  const yesterday = useMemo(() => buildDailySummary(yesterdayDate, data.works.map(work => work.key), data.samples, data.observations, data.observationBatches), [yesterdayDate, data.works, data.samples, data.observations, data.observationBatches]);
   const recentCompletedRun = latestCompletedRun(data.runs);
   const rankingEntries = useMemo(() => buildRankingEntries(analyses, data.samples), [analyses, data.samples]);
   return (
@@ -859,6 +864,12 @@ export function OverviewView({ analyses, data, intraday: suppliedIntraday, onOpe
       <section className="welcome-band">
         <div><p className="eyebrow">{t("作品集信号")}</p><h2>{t("把每一次真实采样，变成可回看的增长轨迹。")}</h2><p>{t("这里只计算你本地保存的 Pixiv 作品管理页快照，不替你猜测安装前发生过什么。")}</p><div className="welcome-account"><AccountIdentity account={data.settings.boundAccount} /></div></div>
         <div className="welcome-meta"><span><Database size={15} aria-hidden="true" />{data.samples.length} {t("个快照")}</span><span className="sampling-meta"><Clock3 size={15} aria-hidden="true" /><strong>{t("今日采样轮次")}</strong><em>{rounds}</em></span><span className="baseline-label"><Info size={14} aria-hidden="true" />{baselineLabel(intraday.baselineLabel)}</span></div>
+      </section>
+      <section className="daily-settlement" aria-label={t("昨日日结")}>
+        <strong>{t("昨日日结")} · {yesterday.date}</strong>
+        <span>{t("浏览")} {formatDelta(yesterday.delta.views)} · {t("收藏")} {formatDelta(yesterday.delta.bookmarks)} · {t("获赞")} {formatDelta(yesterday.delta.likes)} · {t("评论")} {formatDelta(yesterday.delta.comments)}</span>
+        <span>{yesterday.status === "complete" ? t("已覆盖零点至次日零点") : yesterday.status === "estimated" ? t("零点附近采样结算 · 估算") : t("采样不完整 · 仅显示已观察增长")}</span>
+        <small>{t("已取得收尾采样：{count}/{total} 件作品", { count: yesterday.closedWorks, total: yesterday.coveredWorks })}{yesterday.toAt ? ` · ${t("最近观察")} ${formatTimestamp(yesterday.toAt)}` : ""}</small>
       </section>
       <div className="kpi-grid">
         <KpiCard label={t("浏览总量")} total={currentTotal.views} delta={rangeDelta.views} changeLabel={rangeLabel} detail={t("{p0} 个范围采样点", { p0: portfolioTimeline.length })} icon={<Eye size={18} />} tone="coral" animationSignal={animationSignal} />
@@ -888,7 +899,7 @@ export function OverviewView({ analyses, data, intraday: suppliedIntraday, onOpe
             </section>
             <section className="section-band movers-band">
               <div className="section-heading"><div><p className="eyebrow">TOP MOVERS</p><h2>{t("上升作品")}</h2></div><button type="button" className="text-button" onClick={onGoToWorks}>{t("查看全部")} {formatCount(analyses.length)} {t("件作品")} <ChevronRight size={14} aria-hidden="true" /></button></div>
-              <div className="mover-list">{movers.length ? movers.map((analysis) => <TopMover key={analysis.work.key} analysis={analysis} onOpen={() => onOpenWork(analysis.work.key)} />) : <p className="muted-copy">{t("完成第二次同步后，这里会出现有实际变化的作品。")}</p>}</div>
+              <div className="mover-list">{movers.length ? movers.map((analysis) => <TopMover key={analysis.work.key} analysis={analysis} delta={todayByWork.get(analysis.work.key) ?? null} onOpen={() => onOpenWork(analysis.work.key)} />) : <p className="muted-copy">{t("今天至少两次有效观察后，这里显示今日净增长的作品。")}</p>}</div>
             </section>
           </div>
         </>
@@ -935,7 +946,8 @@ const workExtent = (work: WorkAnalysis["work"]): string => {
 };
 
 const statusLabel = (_analysis: WorkAnalysis, intraday: IntradayWorkAnalysis | null): string => {
-  if (!intraday) return t("今日暂无浏览变化");
+  if (!intraday) return t("今日尚未采样");
+  if (intraday.sampleCount < 2) return t("基线已建立，等待下一次观察");
   const delta = todayDelta(intraday, "views");
   if (delta === null) return baselineLabel(intraday.baselineLabel);
   if (delta === 0) return t("今日暂无浏览变化");
@@ -945,7 +957,7 @@ const statusLabel = (_analysis: WorkAnalysis, intraday: IntradayWorkAnalysis | n
 function WorkIncrementPreview({ analysis, intraday, range, onOpen }: { analysis: WorkAnalysis; intraday: IntradayWorkAnalysis | null; range: ChartTimeRange; onOpen: () => void }) {
   const points = useMemo(() => intraday
     ? intraday.points.map((point) => ({ at: point.observedAt, value: point.metrics.views, runId: point.runId }))
-    : analysis.sparkline.map((point) => ({ at: point.at, value: point.views })), [analysis.sparkline, intraday]);
+    : [], [analysis.sparkline, intraday]);
   return <IncrementPreview points={points} range={range} name={analysis.work.title} onOpen={onOpen} />;
 }
 
@@ -1029,7 +1041,7 @@ export function WorksView({ analyses, intradayByWork, onOpenWork, completedRunWo
     const matching = analyses.filter((analysis) => {
       if (normalized && !`${analysis.work.title} ${analysis.work.id} ${workSeries(analysis.work)}`.toLocaleLowerCase().includes(normalized)) return false;
       if (type !== "all" && contentTypeForWork(analysis.work) !== type) return false;
-      if (status !== "all" && statusFor(analysis) !== status) return false;
+      if (status !== "all" && statusFor(analysis, intradayByWork ? intradayByWork.get(analysis.work.key) ?? null : undefined) !== status) return false;
       return true;
     });
     return sortWorkAnalyses(matching, sort, intradayByWork);
@@ -1114,7 +1126,7 @@ export function CompareView({ analyses, compareKeys, onToggleCompare, onOpenWork
   const [query, setQuery] = useState("");
   const [type, setType] = useState<WorkTypeFilter>("all");
   const [onlySelected, setOnlySelected] = useState(false);
-  const range = useMemo(() => resolvedRange(rangeValue), [rangeValue]);
+  const range = resolvedRange(rangeValue);
   const selected = compareKeys.slice(0, MAX_COMPARE_WORKS).map((key) => analyses.find((analysis) => analysis.work.key === key)).filter((analysis): analysis is WorkAnalysis => Boolean(analysis));
   const candidates = analyses.filter((analysis) => {
     const text = `${analysis.work.title} ${analysis.work.id} ${workSeries(analysis.work)}`.toLocaleLowerCase();
@@ -1124,7 +1136,7 @@ export function CompareView({ analyses, compareKeys, onToggleCompare, onOpenWork
   const available = candidates.filter((analysis) => !compareKeys.includes(analysis.work.key));
   const quickAdd = available.slice(0, MAX_COMPARE_WORKS - selected.length);
   const series = selected.map((analysis, index) => {
-    const timeline = data && range ? buildWorkTimeline(analysis.work.key, data.samples, data.observations, valueMode === "delta" ? { startMs: null, endMs: range.endMs } : range, data.observationBatches) : analysis.sparkline.map((point, sequence) => ({ workKey: analysis.work.key, at: point.at, runId: `legacy-${sequence}`, metrics: { views: point.views, likes: point.likes, bookmarks: point.bookmarks, comments: null, rank: null, responses: null, illustrations: null } }));
+    const timeline = data && range ? buildWorkTimeline(analysis.work.key, data.samples, data.observations, range, data.observationBatches) : analysis.sparkline.map((point, sequence) => ({ workKey: analysis.work.key, at: point.at, runId: `legacy-${sequence}`, metrics: { views: point.views, likes: point.likes, bookmarks: point.bookmarks, comments: null, rank: null, responses: null, illustrations: null } }));
     return {
       analysis,
       color: SERIES_COLORS[index] ?? "#00a7e9",
@@ -1202,7 +1214,7 @@ function absoluteGrowthPoints(timeline: WorkTimelinePoint[], metric: DashboardCh
 function GrowthChart({ workKey, samples, observations, observationBatches = [] }: { workKey: string; samples: WorkSample[]; observations: DashboardData["observations"]; observationBatches?: DashboardData["observationBatches"] }) {
   const [metric, setMetric] = useState<DashboardChartMetric>("views");
   const [rangeValue, setRangeValue] = useState<ChartRangeControlValue>(DEFAULT_CHART_RANGE);
-  const range = useMemo(() => resolvedRange(rangeValue), [rangeValue]);
+  const range = resolvedRange(rangeValue);
   const timeline = useMemo(() => range ? buildWorkTimeline(workKey, samples, observations, range, observationBatches) : [], [observationBatches, observations, range, samples, workKey]);
   const points = useMemo(() => absoluteGrowthPoints(timeline, metric), [metric, timeline]);
   // The range-start point carries the last known value, so the first observed

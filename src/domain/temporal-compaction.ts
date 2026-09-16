@@ -1,4 +1,4 @@
-import { parseInstant } from "./time";
+import { beijingDateKey, parseInstant } from "./time";
 import {
   LOSSLESS_RETENTION_HOURS,
   RETENTION_30M_MAX_DAYS,
@@ -245,6 +245,16 @@ export function reduceTemporalCompaction(
     else groups.set(key, { key, workKey: sample.workKey, level, candidates: [sample], selected: sample });
   }
 
+  const dailyEndpoints = new Map<string, WorkSample[]>();
+  for (const sample of samples) {
+    if (sample.kind !== "change" || parseInstant(sample.collectedAt) == null) continue;
+    const key = `${sample.workKey}:${beijingDateKey(sample.collectedAt)}`;
+    const pair = dailyEndpoints.get(key) ?? [sample, sample];
+    if (parseInstant(sample.collectedAt)! < parseInstant(pair[0]!.collectedAt)!) pair[0] = sample;
+    if (parseInstant(sample.collectedAt)! > parseInstant(pair[1]!.collectedAt)!) pair[1] = sample;
+    dailyEndpoints.set(key, pair);
+  }
+  const protectedSamples = new Set([...dailyEndpoints.values()].flat());
   const updates: WorkSample[] = [];
   const deleteIds: number[] = [];
   const kept: WorkSample[] = [];
@@ -266,6 +276,7 @@ export function reduceTemporalCompaction(
     }
     for (const candidate of bucket.candidates) {
       if (candidate === selected) continue;
+      if (protectedSamples.has(candidate)) { kept.push(candidate); continue; }
       if (candidate.id != null && Number.isSafeInteger(candidate.id)) deleteIds.push(candidate.id);
     }
   }

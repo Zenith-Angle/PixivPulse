@@ -11,14 +11,14 @@ const range = { preset: "today" as const, startMs: start, endMs: start + 6 * 3_6
 const pointsFor = (values: Array<number | null>) => values.map((value, index) => ({ at: new Date(start + index * 3_600_000).toISOString(), value }));
 
 describe("work increment preview", () => {
-  it("preserves the preceding observation when reusing a range-clipped timeline", () => {
+  it("does not borrow yesterday as a today baseline when reusing a range-clipped timeline", () => {
     const original = createDemoData().samples[0]!;
     const samples = [-1, 1, 2].map((hour, index) => ({ ...original, runId: `run-${index}`, collectedAt: new Date(start + hour * 3_600_000).toISOString(), metrics: { ...original.metrics, views: [100, 125, 120][index]! } }));
     const work = buildWorkTimeline(original.workKey, samples, [], range);
     const portfolio = buildPortfolioTimeline([original.workKey], samples, [], range);
     for (const timeline of [work, portfolio]) {
       const points = timeline.map((point) => ({ at: point.at, value: point.metrics.views }));
-      expect(buildCompareBuckets(points, range.startMs, range.endMs, 1).map((bucket) => bucket.value)).toEqual([25, -5, null, null, null, null]);
+      expect(buildCompareBuckets(points, range.startMs, range.endMs, 1).map((bucket) => bucket.value)).toEqual([null, -5, null, null, null, null]);
     }
   });
   it("keeps zero, negative changes and gaps visible and opens the work", () => {

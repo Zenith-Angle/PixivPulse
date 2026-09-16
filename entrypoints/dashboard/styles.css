@@ -1176,3 +1176,6 @@ code { border-radius: 3px; background: var(--surface-muted); padding: 1px 4px; c
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+.daily-settlement { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 14px 18px; border: 1px solid var(--line, #dbe3e7); border-radius: 14px; background: var(--surface, #fff); font-size: 13px; line-height: 1.6; }
+.daily-settlement small { flex-basis: 100%; color: var(--muted, #53616b); }

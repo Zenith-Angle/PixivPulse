@@ -81,4 +81,15 @@ describe("durable fixed sync schedule control", () => {
     expect(pendingScheduledDisposition(reduceSyncState(manual, { type: "COMPLETED", now: at + 2_000 }), at, at + 2_000)).toBe("start");
     expect(pendingScheduledDisposition(reduceSyncState(scheduled, { type: "COMPLETED", now: at + 2_000 }), at, at + 2_000)).toBe("drop");
   });
+  it("retains one midnight collection behind a previous scheduled run without replaying stale slots", () => {
+    const midnight = slot("2026-09-01T16:00:00Z");
+    const previous = createApiSyncState("previous", "scheduled", midnight - 1_000);
+    expect(pendingScheduledDisposition(previous, midnight, midnight + 1_000)).toBe("retain");
+    const completed = reduceSyncState(previous, { type: "COMPLETED", now: midnight + 60_000 });
+    expect(pendingScheduledDisposition(completed, midnight, midnight + 60_000)).toBe("start");
+    expect(pendingScheduledDisposition(completed, midnight, midnight + 6 * 60_000)).toBe("drop");
+    const alreadyStarted = createApiSyncState("midnight", "scheduled", midnight);
+    expect(pendingScheduledDisposition(alreadyStarted, midnight, midnight + 1_000)).toBe("drop");
+  });
+
 });

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.17 — 2026-09-17
+
+- Use a shared Beijing midnight observation to close the preceding day and establish the new daily baseline; include the closing midnight in date-only chart ranges.
+- Label the first observation within five minutes after midnight as an estimated boundary; missing boundaries remain partial rather than fabricated 24-hour totals.
+- Align work, portfolio, comparison and follower increments. A single observation establishes a baseline without claiming zero growth; newly discovered counters are excluded from portfolio increments.
+- Show yesterday’s settlement and observation coverage. Preserve daily endpoint values and their sparse dependencies during future retention maintenance.
+- Retain one midnight sampling slot behind a pre-midnight automatic run, without changing the fixed schedule or replaying old slots.
+- Fix chart-to-empty transitions erasing empty-state text, refresh range bounds after new data/day rollover, and keep chart summaries visible.
+
+
 ## 0.5.16 — 2026-09-15
 
 - Correct the store ZIP packaging by excluding the local development key; keep the release version unchanged.

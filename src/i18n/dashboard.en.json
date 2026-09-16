@@ -399,7 +399,7 @@
   "刷新看板": "Refresh dashboard",
   "扩展更新后，已打开的看板可能仍引用旧文件。请刷新看板以加载当前版本。": "After an extension update, an open dashboard may still reference old files. Refresh it to load the current version.",
   "Agent 资源加载失败": "Could not load Agent resources",
-  "PixivPulse 0.5.16 · 本地优先": "PixivPulse 0.5.16 · Local first",
+  "PixivPulse 0.5.17 · 本地优先": "PixivPulse 0.5.17 · Local first",
   "{range}变化": "{range} change",
   "{range}增长": "{range} growth",
   "{range}作品集动量": "{range} portfolio momentum",
@@ -407,5 +407,17 @@
   "所选范围内不足两次有效{metric}观察的作品不会被绘制。": "Works with fewer than two valid {metric} observations in the selected range will not be plotted.",
   "保留 {retained} 条样本，删除 {deleted} 条；{status}。": "Retained {retained} samples; deleted {deleted}. {status}.",
   "北京时间（UTC+8）": "Beijing time (UTC+8)",
-  "切换为{direction}": "Switch to {direction}"
+  "切换为{direction}": "Switch to {direction}",
+  "零点基线 · 北京时间": "Midnight baseline · Beijing time",
+  "零点附近基线 · 估算日界": "Near-midnight baseline · estimated boundary",
+  "今日尚未采样": "No observations today yet",
+  "基线已建立，等待下一次观察": "Baseline established; waiting for the next observation",
+  "昨日日结": "Yesterday’s summary",
+  "已覆盖零点至次日零点": "Covered midnight to next midnight",
+  "零点附近采样结算 · 估算": "Settled using near-midnight observations · estimated",
+  "采样不完整 · 仅显示已观察增长": "Incomplete coverage · observed growth only",
+  "已取得收尾采样：{count}/{total} 件作品": "Closing observation available: {count}/{total} works",
+  "零点后 5 分钟内的首测作为估算日界，同时结算前一天并建立新一天基线；缺测不补零。": "The first observation within 5 minutes after midnight estimates the shared day boundary: it closes the previous day and starts the new baseline. Missing observations stay unknown.",
+  "采样点": "Observation",
+  "今天至少两次有效观察后，这里显示今日净增长的作品。": "After at least two valid observations today, works with positive daily growth appear here."
 }

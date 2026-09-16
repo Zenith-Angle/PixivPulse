@@ -27,7 +27,7 @@ describe("account follower analytics", () => {
     ]);
   });
 
-  it("uses the latest pre-range sample as an exact range and Beijing-today baseline", () => {
+  it("does not count the prior evening as exact today growth", () => {
     const now = "2026-08-31T12:00:00+08:00";
     const analytics = buildFollowerAnalytics([
       sample("before-range", "2026-08-30T11:00:00+08:00", 90),
@@ -37,12 +37,12 @@ describe("account follower analytics", () => {
     ], { accountId: "account-a", range: { preset: "today", now }, now });
 
     expect(analytics.current).toBe(130);
-    expect(analytics.rangeDelta).toBe(30);
-    expect(analytics.rangeConfidence).toBe("exact");
-    expect(analytics.recordIntegrity).toBe("complete");
-    expect(analytics.rangeBaseline?.followers).toBe(100);
-    expect(analytics.todayDelta).toBe(30);
-    expect(analytics.todayConfidence).toBe("exact");
+    expect(analytics.rangeDelta).toBe(20);
+    expect(analytics.rangeConfidence).toBe("approximate");
+    expect(analytics.recordIntegrity).toBe("approximate");
+    expect(analytics.rangeBaseline).toBeNull();
+    expect(analytics.todayDelta).toBe(20);
+    expect(analytics.todayConfidence).toBe("approximate");
   });
 
   it("marks an in-range first-to-last delta approximate when no prior baseline exists", () => {

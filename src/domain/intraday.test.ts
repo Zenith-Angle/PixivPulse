@@ -121,7 +121,7 @@ function buildReferenceIntradayAnalytics(input: IntradayAnalyticsInput): ReturnT
       const timestamp = parseInstant(item.collectedAt);
       return item.kind === "change" && timestamp != null && timestamp >= day.startMs && timestamp < day.endMs && timestamp <= observationCeiling;
     }).length;
-    const baselineLabel: "estimated" | "partial" = baselineAt - day.startMs <= Math.max(2 * 60 * 60_000, Math.max(0, input.configuredIntervalHours ?? input.syncIntervalHours ?? 1) * 2 * 60 * 60_000)
+    const baselineLabel = baselineAt === day.startMs ? "exact" : baselineAt - day.startMs <= 5 * 60_000
       ? "estimated"
       : "partial";
     works.push({
@@ -132,7 +132,7 @@ function buildReferenceIntradayAnalytics(input: IntradayAnalyticsInput): ReturnT
       sampleCount: observations.length,
       changeSampleCount,
       points,
-      delta: referenceSubtractMetrics(latestMetrics, baselineMetrics),
+      delta: points.length >= 2 && parseInstant(points.at(-1)!.observedAt)! > baselineAt ? referenceSubtractMetrics(latestMetrics, baselineMetrics) : referenceEmptyMetrics(),
     });
   }
 
@@ -185,7 +185,7 @@ function buildReferenceIntradayAnalytics(input: IntradayAnalyticsInput): ReturnT
   for (const work of works) for (const key of referenceAdditiveMetricKeys) delta[key] = referenceAddNullable(delta[key], work.delta[key]);
   return {
     date: day.date,
-    baselineLabel: works.length === 0 || works.some((work) => work.baselineLabel === "partial") ? "partial" : "estimated",
+    baselineLabel: works.length === 0 || works.some((work) => work.baselineLabel === "partial") ? "partial" : works.some(work => work.baselineLabel === "estimated") ? "estimated" : "exact",
     sampleCount: portfolioPoints.length,
     points: portfolioPoints,
     works,
@@ -228,9 +228,9 @@ describe("intraday analytics", () => {
       now: "2026-08-30T18:00:00+08:00",
       configuredIntervalHours: 1,
     });
-    expect(result.works[0]?.delta.views).toBe(0);
+    expect(result.works[0]?.delta.views).toBeNull();
     expect(result.works[0]?.changeSampleCount).toBe(1);
-    expect(result.delta.views).toBe(0);
+    expect(result.delta.views).toBeNull();
   });
 
   it("counts portfolio sampling rounds by run instead of by work", () => {
@@ -339,7 +339,7 @@ describe("intraday analytics", () => {
     expect(result.delta.views).toBe(5);
   });
 
-  it("marks a first observation close to Beijing midnight as a near-day-start baseline", () => {
+  it("marks a one-hour-late first observation partial, not a midnight baseline", () => {
     const result = buildIntradayAnalytics({
       works: [{ key: "illust-1" }],
       samples: [
@@ -354,8 +354,8 @@ describe("intraday analytics", () => {
       configuredIntervalHours: 1,
     });
 
-    expect(result.works[0]).toMatchObject({ baselineLabel: "estimated", baselineAt: "2026-08-30T17:00:00.000Z" });
-    expect(result.delta.views).toBe(0);
+    expect(result.works[0]).toMatchObject({ baselineLabel: "partial", baselineAt: "2026-08-30T17:00:00.000Z" });
+    expect(result.delta.views).toBeNull();
   });
 
   it("uses today's first observation as the displayed daily-change baseline", () => {

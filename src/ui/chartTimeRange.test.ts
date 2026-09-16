@@ -55,7 +55,7 @@ describe("chart time ranges", () => {
     });
   });
 
-  it("includes a custom end date through the final Beijing millisecond", () => {
+  it("includes the closing midnight of a custom end date", () => {
     const range = resolveChartTimeRange({
       preset: "custom",
       start: "2026-08-29",
@@ -64,14 +64,14 @@ describe("chart time ranges", () => {
     expect(range).toEqual({
       preset: "custom",
       startMs: Date.parse("2026-08-28T16:00:00.000Z"),
-      endMs: Date.parse("2026-08-30T15:59:59.999Z"),
+      endMs: Date.parse("2026-08-30T16:00:00.000Z"),
     });
 
     const points = [
       { at: utc("2026-08-30T15:59:59.999Z"), value: 1 },
       { at: utc("2026-08-30T16:00:00.000Z"), value: 2 },
     ];
-    expect(filterChartTimePoints(points, range ?? { preset: "all" }).map((point) => point.value)).toEqual([1]);
+    expect(filterChartTimePoints(points, range ?? { preset: "all" }).map((point) => point.value)).toEqual([1, 2]);
   });
 
   it("includes the whole minute when a custom datetime end has minute precision", () => {
@@ -104,7 +104,7 @@ describe("chart time ranges", () => {
       records,
       { preset: "custom", start: "2026-08-30", end: "2026-08-30" },
       (record) => record.observedAt,
-    ).map((record) => record.value)).toEqual([1]);
+    ).map((record) => record.value)).toEqual([1, 2]);
     expect(resolveChartTimeRange({ preset: "custom", start: "2026-08-31", end: "2026-08-30" })).toBeNull();
     expect(resolveChartTimeRange({ preset: "custom", start: "bad", end: "2026-08-30" })).toBeNull();
     expect(isInChartTimeRange("2026-08-30T15:59:59.999Z", { preset: "custom", start: "2026-08-30", end: "2026-08-30" })).toBe(true);

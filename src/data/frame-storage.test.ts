@@ -1,3 +1,4 @@
+import { buildDailySummary } from "../domain/daily-summary";
 import "fake-indexeddb/auto";
 import { deleteDB } from "idb";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -227,8 +228,8 @@ describe("metric frame storage", () => {
 
     const plan = buildMetricFrameCompactionPlan(frames, now);
     expect(plan.lossySources).toEqual([frames[1]]);
-    expect(plan.rewrites.find((rewrite) => rewrite.sourceIdentity === metricFrameIdentity(frames[0]!))?.sourceDigest)
-      .toBe(metricFrameDigest(frames[0]!));
+    expect(plan.rewrites.find((rewrite) => rewrite.sourceIdentity === metricFrameIdentity(frames[0]!))).toBeUndefined();
+    expect(plan.rewrites.find((rewrite) => rewrite.sourceIdentity === metricFrameIdentity(frames[1]!))?.sourceDigest).toBe(metricFrameDigest(frames[1]!));
 
     const compacted = frames.map((frame) => plan.rewrites.find((rewrite) => rewrite.sourceIdentity === metricFrameIdentity(frame))?.frame ?? frame);
     const secondPlan = buildMetricFrameCompactionPlan(compacted, now);
@@ -269,4 +270,21 @@ describe("metric frame storage", () => {
     expect(counts).toEqual({ lossless: 3, "30m": 3, "1h": 2, "6h": 4 });
     expect(Object.values(counts).reduce((sum, count) => sum + count, 0)).toBe(legacySamples.length - 1 + frames.reduce((sum, frame) => sum + frame.changes.length, 0));
   });
+  it("preserves a daily closing value and the sparse fields needed by an unchanged midnight observation", () => {
+    const times = ["2026-08-01T00:00:00+08:00", "2026-08-01T23:30:00+08:00", "2026-08-02T00:00:00+08:00", "2026-08-02T00:30:00+08:00", "2026-08-02T01:00:00+08:00"];
+    const frames = times.map((collectedAt, runSeq) => buildMetricFrame({
+      runId: `boundary-${runSeq}`, runSeq, collectedAt, scope: "complete", parser: 1, quality: 1, observedOrdinals: [0],
+      changes: runSeq === 2 ? [] : [{ ordinal: 0, metrics: runSeq === 0 ? full(100, 1) : { views: [100, 150, 150, 170, 190][runSeq]! } }],
+    }));
+    const dictionary = createWorkDictionary([{ ordinal: 0, workKey: "a" }]);
+    const before = decodePublicFrameHistory(dictionary, frames);
+    const plan = buildMetricFrameCompactionPlan(frames, "2026-09-15T00:00:00Z");
+    const projected = frames.map(frame => plan.rewrites.find(r => r.sourceIdentity === metricFrameIdentity(frame))?.frame ?? frame);
+    const after = decodePublicFrameHistory(dictionary, projected);
+    const summarize = (history: typeof before) => buildDailySummary("2026-08-01", ["a"], history.samples, [], history.observationBatches);
+    expect(summarize(before).delta.views).toBe(50);
+    expect(summarize(after)).toEqual(summarize(before));
+    expect(buildMetricFrameCompactionPlan(projected, "2026-09-15T00:00:00Z").rewrites).toHaveLength(0);
+  });
+
 });

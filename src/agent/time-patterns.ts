@@ -1,3 +1,4 @@
+import { dayBoundaryCoordinates } from "../domain/day-boundary";
 import type { DashboardData, WorkMetrics } from "../domain/types";
 import type { ToolDefinition } from "./types";
 
@@ -67,7 +68,8 @@ export function createTimePatternQuery(data: DashboardData) {
       if (known) points.push({ at: event.at, metrics: known, precisionHours: precision });
       else points.push({ at: event.at, metrics: { views: null, bookmarks: null, likes: null, comments: null, rank: null, responses: null, illustrations: null }, precisionHours: 0 });
     }
-    indexed.set(key, points);
+    const coordinates = dayBoundaryCoordinates(points.filter(point => point.precisionHours === 0).map(point => point.at));
+    indexed.set(key, points.map(point => ({ ...point, at: coordinates.get(point.at) ?? point.at })));
   }
 
   return (args: Record<string, unknown>) => {
@@ -161,7 +163,7 @@ export function createTimePatternQuery(data: DashboardData) {
       coverage: { intervals, accepted, excludedCoarse: coarse, excludedBoundary: boundary, missingPairs: missing, crossSlotIntervals: crossSlot, medianIntervalHours: medianHours, suggestedBucketHours, suggestedDimension: args.dimension === "hour_of_day" && suggestedBucketHours === 24 ? "date" : args.dimension },
       valueColumns: ["netChange", "positiveChange", "negativeChange", "netPerWorkHour", "shareOfPositiveChange", "observedWorkHours", "observedDays", "coveredWorks"],
       total: rows.length, offset, nextOffset: offset + limit < rows.length ? offset + limit : null, rows: rows.slice(offset, offset + limit),
-      interpretation: "values align to metrics then valueColumns. Null is unobserved, zero is observed no change. Increments belong to the interval END slot (exact boundary belongs to preceding slot), not exact event times; cross-slot intervals are approximate. No interpolation. Rates normalize by observed work-hours to reduce sampling-frequency/portfolio-size bias, NOT whole-account events/hour. Positive/negative changes are net observed counter differences, not individual events. Compare coverage/observedDays before calling a pattern typical. Excluded coarse changes cannot be assigned to narrow slots; retry with coarser buckets or date dimension if needed. Peaks/lows rank normalized rates over ALL rows. This is historical observation, NOT an optimal publishing-time or causal claim.",
+      interpretation: "values align to metrics then valueColumns. Null is unobserved, zero is observed no change. Increments belong to the interval END slot (exact boundary belongs to preceding slot), not exact event times; cross-slot intervals are approximate. The first fine-grained observation within five minutes after Beijing midnight estimates a shared day boundary, closing the preceding day and starting the new baseline; original stored timestamps are unchanged. No interpolation. Rates normalize by observed work-hours to reduce sampling-frequency/portfolio-size bias, NOT whole-account events/hour. Positive/negative changes are net observed counter differences, not individual events. Compare coverage/observedDays before calling a pattern typical. Excluded coarse changes cannot be assigned to narrow slots; retry with coarser buckets or date dimension if needed. Peaks/lows rank normalized rates over ALL rows. This is historical observation, NOT an optimal publishing-time or causal claim.",
     };
   };
 }
