@@ -97,9 +97,17 @@ export const formatTimestamp = (value: string | null | undefined): string => {
   return formatBeijingTimestamp(timestamp, { includeYear: false }) ?? t("未记录");
 };
 
+const countFormatters = new Map<string, Intl.NumberFormat>();
+
 export const formatCount = (value: number | null | undefined): string => {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat(getLocale(), { maximumFractionDigits: 0 }).format(value);
+  const locale = getLocale();
+  let formatter = countFormatters.get(locale);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+    countFormatters.set(locale, formatter);
+  }
+  return formatter.format(value);
 };
 
 export const formatDelta = (value: number | null | undefined, suffix = ""): string => {
@@ -195,8 +203,15 @@ export const analyzeWork = (work: WorkRecord, samples: WorkSample[]): WorkAnalys
   };
 };
 
-export const analyzeDashboard = (data: DashboardData): WorkAnalysis[] =>
-  data.works.map((work) => analyzeWork(work, data.samples));
+export const analyzeDashboard = (data: DashboardData): WorkAnalysis[] => {
+  const byWork = new Map<string, WorkSample[]>();
+  for (const sample of data.samples) {
+    const history = byWork.get(sample.workKey) ?? [];
+    history.push(sample);
+    byWork.set(sample.workKey, history);
+  }
+  return data.works.map((work) => analyzeWork(work, byWork.get(work.key) ?? []));
+};
 
 export const csvCell = (value: unknown): string => {
   const raw = value === null || value === undefined ? "" : String(value);

@@ -133,7 +133,22 @@ function formatDateKeyParts(value: number): string | null {
  * Parse a value that represents an absolute instant into milliseconds.
  * Invalid values return null; this helper never substitutes the current time.
  */
+// Observation rounds share timestamps across all works. Keep validation results
+// bounded and reusable without retaining sample arrays or changing parsing rules.
+const instantCache = new Map<string, number | null>();
+const displayFormatters = new Map<string, Intl.DateTimeFormat>();
+
 export function parseInstant(value: unknown): number | null {
+  if (typeof value !== "string" || value.length > 128) return parseInstantUncached(value);
+  const cached = instantCache.get(value);
+  if (cached !== undefined) return cached;
+  const result = parseInstantUncached(value);
+  if (instantCache.size >= 8192) instantCache.delete(instantCache.keys().next().value!);
+  instantCache.set(value, result);
+  return result;
+}
+
+function parseInstantUncached(value: unknown): number | null {
   if (value instanceof Date) {
     const timestamp = value.getTime();
     return isFiniteTime(timestamp) ? timestamp : null;
@@ -222,16 +237,22 @@ export function formatBeijingTimestamp(
   const timestamp = parseInstant(value);
   if (timestamp == null) return null;
   try {
-    return new Intl.DateTimeFormat(`${getLocale()}-u-nu-latn`, {
-      timeZone: BUSINESS_TIME_ZONE,
-      ...(options.includeYear ? { year: "numeric" as const } : {}),
-      month: "numeric",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      ...(options.includeSeconds ? { second: "2-digit" as const } : {}),
-      hourCycle: "h23",
-    }).format(new Date(timestamp));
+    const key = `${getLocale()}:${!!options.includeYear}:${!!options.includeSeconds}`;
+    let formatter = displayFormatters.get(key);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat(`${getLocale()}-u-nu-latn`, {
+        timeZone: BUSINESS_TIME_ZONE,
+        ...(options.includeYear ? { year: "numeric" as const } : {}),
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        ...(options.includeSeconds ? { second: "2-digit" as const } : {}),
+        hourCycle: "h23",
+      });
+      displayFormatters.set(key, formatter);
+    }
+    return formatter.format(timestamp);
   } catch {
     return null;
   }

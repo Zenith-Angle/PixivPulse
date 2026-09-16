@@ -188,13 +188,21 @@ export const rankingEntryForAnalysis = (analysis: WorkAnalysis, history = rankin
 export const buildRankingEntries = (
   analyses: readonly WorkAnalysis[],
   samples?: readonly WorkSample[],
-): RankingEntry[] => analyses
+): RankingEntry[] => {
+  const byWork = new Map<string, WorkSample[]>();
+  if (samples) for (const sample of samples) {
+    const history = byWork.get(sample.workKey) ?? [];
+    history.push(sample);
+    byWork.set(sample.workKey, history);
+  }
+  return analyses
   .map((analysis) => rankingEntryForAnalysis(
     analysis,
-    samples ? rankingHistoryForWork(analysis.work, samples) : rankingHistoryForAnalysis(analysis),
+    samples ? rankingHistoryForWork(analysis.work, byWork.get(analysis.work.key) ?? []) : rankingHistoryForAnalysis(analysis),
   ))
   .filter((entry): entry is RankingEntry => entry !== null)
   .sort((left, right) => left.rank - right.rank || left.analysis.work.title.localeCompare(right.analysis.work.title, "zh-CN"));
+};
 
 export const rankingSourceLabel = (source: string | null | undefined): string => {
   const normalized = source?.trim().toLocaleLowerCase();

@@ -120,7 +120,8 @@ export function EChartsHost({
       chartRef.current = chart;
       domainRef.current = getChartTimeExtent(option);
       viewportRef.current = domainRef.current;
-      chart.setOption({ ...option, series: buildTrendSeries(option), aria: chartAria, animation: !reducedMotion }, { lazyUpdate: false });
+      // The option effect below performs the initial draw as well as updates.
+      // Drawing here too doubles interpolation and ECharts layout on every mount.
       chart.on("datazoom", handleZoom);
       setRendered(true);
       if (typeof ResizeObserver !== "undefined") {
@@ -158,7 +159,7 @@ export function EChartsHost({
     if (domainChanged) viewportRef.current = domain;
     domainRef.current = domain;
     // Preserve the user's zoom on same-domain refreshes; a new date range starts in full view.
-    const currentZoom = (chartRef.current.getOption().dataZoom as Array<{ start?: number; end?: number }> | undefined)?.[0];
+    const currentZoom = (chartRef.current.getOption()?.dataZoom as Array<{ start?: number; end?: number }> | undefined)?.[0];
     const dataZoom = Array.isArray(option.dataZoom)
       ? option.dataZoom.map((zoom) => ({
         ...zoom,
@@ -171,13 +172,13 @@ export function EChartsHost({
       : option.dataZoom;
     try {
       chartRef.current.setOption(
-        { ...option, dataZoom, series: buildTrendSeries(option, viewportRef.current), aria: chartAria, animation: !reducedMotion },
+        { ...option, dataZoom, series: buildTrendSeries(option, viewportRef.current), aria: chartAria, animation: !reducedMotion, animationDuration: 0 },
         CHART_REPLACE_OPTIONS,
       );
     } catch {
       // A disposed chart can race an option update during StrictMode cleanup.
     }
-  }, [option, reducedMotion, ariaLabel, compact, presentation]);
+  }, [option, reducedMotion, ariaLabel, compact, presentation, hasData]);
 
   const chartHeight = typeof height === "number" ? `${height}px` : height;
   const style = { minHeight: chartHeight, height: "auto" };

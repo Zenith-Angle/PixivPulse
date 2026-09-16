@@ -47,3 +47,27 @@ describe("historical chart timelines", () => {
     expect(buildPortfolioTimeline(["a"], samples, [], range).map((point) => point.metrics.views)).toEqual([10, 15]);
   });
 });
+
+
+describe("bounded historical timeline queries", () => {
+  it("carries old metrics into an unchanged midnight observation without counting old history", () => {
+    const samples = [sample("a", "old", "2026-08-01T00:00:00+08:00", 10), sample("a", "new", "2026-08-30T01:00:00+08:00", 14)];
+    const batches: ObservationBatch[] = [{ runId: "midnight", observedAt: "2026-08-30T00:02:00+08:00", workKeys: ["a"], changedWorkKeys: [], scope: "complete" }];
+    const range = { startMs: Date.parse("2026-08-30T00:00:00+08:00"), endMs: Date.parse("2026-08-30T02:00:00+08:00") };
+    const points = buildPortfolioTimeline(["a"], samples, [], range, batches);
+    expect(points.map(point => point.metrics.views)).toEqual([10, 14]);
+    expect(points.at(-1)?.growth?.views).toBe(4);
+    expect(Date.parse(points[0]!.at)).toBe(range.startMs);
+    // Cached timestamp parsing must never cache the mutable metric payload.
+    samples[0]!.metrics.views = 9;
+    expect(buildPortfolioTimeline(["a"], samples, [], range, batches).at(-1)?.growth?.views).toBe(5);
+  });
+
+  it("keeps the real first midnight observation when clipping a later custom start", () => {
+    const samples = [sample("a", "first", "2026-08-30T00:01:00+08:00", 10), sample("a", "second", "2026-08-30T00:03:00+08:00", 12)];
+    const startMs = Date.parse("2026-08-30T00:02:00+08:00");
+    const points = buildWorkTimeline("a", samples, [], { startMs, endMs: null });
+    expect(points.map(point => point.metrics.views)).toEqual([10, 12]);
+    expect(points.map(point => Date.parse(point.at))).toEqual([startMs, Date.parse(samples[1]!.collectedAt)]);
+  });
+});

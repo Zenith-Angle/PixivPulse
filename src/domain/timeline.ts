@@ -1,5 +1,5 @@
 import { dayBoundaryCoordinates, isMidnight, MIDNIGHT_GRACE_MS } from "./day-boundary";
-import { parseInstant } from "./time";
+import { beijingDayRange, parseInstant } from "./time";
 import type { ObservationBatch, WorkMetrics, WorkObservation, WorkSample } from "./types";
 
 const ADDITIVE_KEYS = ["views", "bookmarks", "likes", "comments"] as const;
@@ -114,7 +114,10 @@ function buildIndexedWorkTimeline(
   range: TimelineRange, observationBatches: readonly ObservationBatch[],
 ): WorkTimelinePoint[] {
   const instants = new Map<string, TimelineInstant>();
-  const sourceRange = { startMs: null, endMs: range.endMs != null && isMidnight(range.endMs) ? Math.min(Date.now(), range.endMs + MIDNIGHT_GRACE_MS) : range.endMs };
+  // Only boundary candidates in the selected days can affect this range.
+  // Keep earlier samples indexed for carry-forward, but do not reconstruct
+  // every historical observation just to discard it after midnight mapping.
+  const sourceRange = { startMs: range.startMs == null ? null : beijingDayRange(range.startMs)?.startMs ?? range.startMs, endMs: range.endMs != null && isMidnight(range.endMs) ? Math.min(Date.now(), range.endMs + MIDNIGHT_GRACE_MS) : range.endMs };
   addBoundaryInstant(instants, range);
 
   for (const observation of observations) {
@@ -171,6 +174,7 @@ export function buildPortfolioTimeline(
   const timelines = buildWorkTimelines(selectedKeys, samples, observations, range, observationBatches);
   const instants = new Map<string, TimelineInstant>();
   for (const timeline of timelines) for (const point of timeline) addInstant(instants, point.at, point.runId, range);
+  const times = timelines.map(points => points.map(point => Date.parse(point.at)));
   const cursors = timelines.map(() => -1);
   const growthByWork = timelines.map(() => ({ views: 0, bookmarks: 0, likes: 0, comments: 0 }));
   return orderedInstants(instants).flatMap(instant => {
@@ -178,11 +182,11 @@ export function buildPortfolioTimeline(
     let incrementObserved = false;
     const growth = { views: null, bookmarks: null, likes: null, comments: null } as PortfolioTimelinePoint["metrics"];
     timelines.forEach((points, index) => {
-      while (cursors[index]! + 1 < points.length && Date.parse(points[cursors[index]! + 1]!.at) <= instant.at) {
+      while (cursors[index]! + 1 < points.length && times[index]![cursors[index]! + 1]! <= instant.at) {
         const previous = points[cursors[index]!];
         const next = points[++cursors[index]!]!;
         for (const key of ADDITIVE_KEYS) {
-          if (previous && Date.parse(next.at) > Date.parse(previous.at) && previous.metrics[key] != null && next.metrics[key] != null) {
+          if (previous && times[index]![cursors[index]!]! > times[index]![cursors[index]! - 1]! && previous.metrics[key] != null && next.metrics[key] != null) {
             incrementObserved = true;
             growthByWork[index]![key] += next.metrics[key]! - previous.metrics[key]!;
           }

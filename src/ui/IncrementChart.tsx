@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { buildAbsoluteCompareChartOption, DASHBOARD_CHART_METRIC_LABELS, type ChartTimePoint, type DashboardChartMetric } from "./chartOptions";
 import { buildCompareBuckets, compareBucketLabel, compareBucketLayout } from "./compareBuckets";
 import type { ChartTimeRange } from "./chartTimeRange";
@@ -18,12 +18,32 @@ export function IncrementChart({ points, metric, range, name }: { points: ChartT
     <div className="increment-heading"><h3>{t("{value0}增量", { value0: label })}</h3><span>{t("每 {value0} · 与上方范围一致", { value0: compareBucketLabel(layout.hours) })}</span></div>
     <EChartsHost option={option} hasData={buckets.some((bucket) => bucket.value !== null)} presentation="buckets" height={190}
       ariaLabel={t("{value0}{value1}分段增量图", { value0: name, value1: label })} emptyMessage={t("所选范围内尚无可计算的增量，至少需要两次有效观察。")}
-      summary={<>{t("每 {value0} 的已观察净增量；无观察时段留空，负值表示回落。", { value0: compareBucketLabel(layout.hours) })} {t("零点后 5 分钟内的首测作为估算日界，同时结算前一天并建立新一天基线；缺测不补零。")}</>} />
+      summary={<>{t("每 {value0} 的已观察净增量；无观察时段留空，负值表示回落。", { value0: compareBucketLabel(layout.hours) })}</>} />
   </section>;
 }
 
 /** Lightweight SVG keeps the library responsive even with many work cards. */
-export function IncrementPreview({ points, range, name, onOpen }: { points: ChartTimePoint[]; range: ChartTimeRange; name: string; onOpen: () => void }) {
+type IncrementPreviewProps = { points: ChartTimePoint[]; range: ChartTimeRange; name: string; onOpen: () => void };
+
+export function IncrementPreview(props: IncrementPreviewProps) {
+  const host = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    if (visible || !host.current) return;
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      setVisible(true);
+      observer.disconnect();
+    }, { rootMargin: "200px" });
+    observer.observe(host.current);
+    return () => observer.disconnect();
+  }, [visible]);
+  return <div ref={host} className="increment-preview-slot">{visible
+    ? <VisibleIncrementPreview {...props} />
+    : <button type="button" className="increment-preview increment-preview-placeholder" onClick={props.onOpen} aria-label={t("查看{value0}增量详情", { value0: props.name })} />}</div>;
+}
+
+function VisibleIncrementPreview({ points, range, name, onOpen }: IncrementPreviewProps) {
   const { start, end, hours } = compareBucketLayout(points, range);
   const buckets = buildCompareBuckets(points, start, end, hours);
   const values = buckets.flatMap((bucket) => bucket.value == null ? [] : [bucket.value]);
