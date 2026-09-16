@@ -2,8 +2,10 @@
 .language-picker label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .language-picker select { min-height: 34px; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 5px 8px; font: inherit; }
 .language-picker select:focus-visible { outline: 3px solid #00a7e9; outline-offset: 2px; }
-.language-picker--compact { padding: 6px 16px; }
-.language-picker--compact label { justify-content: space-between; }
 .language-picker [role=alert] { display: block; color: var(--danger); margin-top: 4px; }
 
-.language-picker--compact { flex: 0 0 auto; border-bottom: 1px solid var(--line); background: var(--surface); }
+.language-picker--compact { position: relative; flex: 0 0 auto; }
+.language-picker--compact label { flex-wrap: nowrap; }
+.language-picker--compact label > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.language-picker--compact select { width: 66px; min-height: 30px; padding: 4px 6px; font-size: 11px; }
+.language-picker--compact [role=alert] { position: absolute; top: 100%; right: 0; z-index: 10; width: 220px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--surface); box-shadow: 0 4px 12px #0002; }
